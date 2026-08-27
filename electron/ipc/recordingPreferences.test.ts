@@ -7,6 +7,7 @@ describe("normalizeRecordingPreferences", () => {
 			microphoneEnabled: true,
 			microphoneDeviceId: undefined,
 			systemAudioEnabled: false,
+			excludeTaskbar: false,
 			webcamBackgroundBlur: { enabled: false, amount: 12 },
 		});
 	});
@@ -16,12 +17,14 @@ describe("normalizeRecordingPreferences", () => {
 			normalizeRecordingPreferences({
 				microphoneDeviceId: "mic-1",
 				systemAudioEnabled: true,
+				excludeTaskbar: true,
 				webcamBackgroundBlur: { enabled: true, amount: 1_000 },
 			}),
 		).toEqual({
 			microphoneEnabled: false,
 			microphoneDeviceId: "mic-1",
 			systemAudioEnabled: true,
+			excludeTaskbar: true,
 			webcamBackgroundBlur: { enabled: true, amount: 20 },
 		});
 	});

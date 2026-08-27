@@ -78,6 +78,7 @@ import {
 	describeBlockedInMemoryExportSave,
 } from "@/lib/exporter/exportSavePolicy";
 import { matchesShortcut } from "@/lib/shortcuts";
+import { normalizeScreenCropRegion } from "@/lib/screenCrop";
 import {
 	DEFAULT_WEBCAM_BACKGROUND_BLUR,
 	normalizeWebcamBackgroundBlurSettings,
@@ -2516,6 +2517,11 @@ export default function VideoEditor() {
 					setCurrentProjectPath(null);
 					setLastSavedSnapshot(null);
 					resetSourceScopedEditorState();
+					setCropRegion(
+						normalizeScreenCropRegion(sessionResult.session.initialCropRegion) ?? {
+							...DEFAULT_CROP_REGION,
+						},
+					);
 					pendingFreshRecordingAutoZoomPathRef.current = autoApplyFreshRecordingAutoZooms
 						? sourceVideoUrl
 						: null;

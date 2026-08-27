@@ -1,4 +1,5 @@
 import type { WebcamBackgroundBlurSettings } from "../../src/lib/webcamBackgroundBlur";
+import type { ScreenCropRegion } from "../../src/lib/screenCrop";
 
 export type SelectedSource = {
 	id?: string;
@@ -51,6 +52,7 @@ export type RecordingSessionData = {
 	timeOffsetMs?: number;
 	hideOverlayCursorByDefault?: boolean;
 	webcamBackgroundBlur?: WebcamBackgroundBlurSettings;
+	initialCropRegion?: ScreenCropRegion | null;
 };
 
 export type PauseSegment = {
@@ -64,6 +66,7 @@ export type RecordingSessionManifest = {
 	webcamFileName?: string | null;
 	timeOffsetMs?: number;
 	webcamBackgroundBlur?: WebcamBackgroundBlurSettings;
+	initialCropRegion?: ScreenCropRegion | null;
 };
 
 export type ProjectLibraryEntry = {

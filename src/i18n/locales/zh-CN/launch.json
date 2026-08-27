@@ -17,6 +17,7 @@
 		"openProject": "打开项目",
 		"hideHudFromVideo": "从录制中隐藏 HUD",
 		"showHudInVideo": "在录制中显示 HUD",
+		"excludeTaskbar": "排除任务栏",
 		"hideHud": "隐藏 HUD",
 		"closeApp": "关闭应用",
 		"screens": "屏幕",

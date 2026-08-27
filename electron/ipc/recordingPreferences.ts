@@ -8,6 +8,7 @@ export interface RecordingPreferences {
 	microphoneEnabled: boolean;
 	microphoneDeviceId?: string;
 	systemAudioEnabled: boolean;
+	excludeTaskbar: boolean;
 	webcamBackgroundBlur: WebcamBackgroundBlurSettings;
 }
 
@@ -20,6 +21,7 @@ export function normalizeRecordingPreferences(value: unknown): RecordingPreferen
 				? candidate.microphoneDeviceId
 				: undefined,
 		systemAudioEnabled: candidate.systemAudioEnabled === true,
+		excludeTaskbar: candidate.excludeTaskbar === true,
 		webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(
 			candidate.webcamBackgroundBlur ?? DEFAULT_WEBCAM_BACKGROUND_BLUR,
 		),

@@ -494,6 +494,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	getSelectedSource: () => {
 		return ipcRenderer.invoke("get-selected-source");
 	},
+	getTaskbarCropRegion: (source: ProcessedDesktopSource) => {
+		return ipcRenderer.invoke("get-taskbar-crop-region", source);
+	},
 	onSelectedSourceChanged: (callback: (source: ProcessedDesktopSource | null) => void) => {
 		const listener = (
 			_event: Electron.IpcRendererEvent,
@@ -738,6 +741,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			webcamPath?: string | null;
 			timeOffsetMs?: number;
 			hideOverlayCursorByDefault?: boolean;
+			webcamBackgroundBlur?: { enabled: boolean; amount: number };
+			initialCropRegion?: { x: number; y: number; width: number; height: number } | null;
 		},
 		options?: { preserveProjectPath?: boolean },
 	) => {
@@ -972,6 +977,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		microphoneEnabled?: boolean;
 		microphoneDeviceId?: string;
 		systemAudioEnabled?: boolean;
+		excludeTaskbar?: boolean;
 		webcamBackgroundBlur?: { enabled: boolean; amount: number };
 	}) => ipcRenderer.invoke("set-recording-preferences", prefs),
 	getCountdownDelay: () => ipcRenderer.invoke("get-countdown-delay"),

@@ -165,6 +165,7 @@ export function registerSettingsHandlers() {
 				microphoneEnabled?: boolean;
 				microphoneDeviceId?: string;
 				systemAudioEnabled?: boolean;
+				excludeTaskbar?: boolean;
 				webcamBackgroundBlur?: unknown;
 			},
 		) => {

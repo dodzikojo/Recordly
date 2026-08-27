@@ -72,6 +72,8 @@ function LaunchWindowContent() {
 		setMicrophoneDeviceId,
 		systemAudioEnabled,
 		setSystemAudioEnabled,
+		excludeTaskbar,
+		setExcludeTaskbar,
 		webcamEnabled,
 		setWebcamEnabled,
 		webcamDeviceId,
@@ -382,6 +384,9 @@ function LaunchWindowContent() {
 				onToggleHudCaptureProtection={() => {
 					void toggleHudCaptureProtection();
 				}}
+				supportsExcludeTaskbar={platform === "win32"}
+				excludeTaskbar={excludeTaskbar}
+				onToggleExcludeTaskbar={() => setExcludeTaskbar(!excludeTaskbar)}
 				onChooseRecordingsDirectory={() => {
 					void chooseRecordingsDirectory();
 				}}

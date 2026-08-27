@@ -8,6 +8,7 @@ import {
 	SunIcon,
 	MoonIcon,
 	DesktopIcon,
+	CropIcon,
 } from "@phosphor-icons/react";
 import type { ReactElement } from "react";
 import { useI18n } from "@/contexts/I18nContext";
@@ -38,6 +39,9 @@ export function MorePopover({
 	supportsHudCaptureProtection,
 	hideHudFromCapture,
 	onToggleHudCaptureProtection,
+	supportsExcludeTaskbar,
+	excludeTaskbar,
+	onToggleExcludeTaskbar,
 	onChooseRecordingsDirectory,
 	onOpenVideoFile,
 	onOpenProjectBrowser,
@@ -49,6 +53,9 @@ export function MorePopover({
 	supportsHudCaptureProtection: boolean;
 	hideHudFromCapture: boolean;
 	onToggleHudCaptureProtection: () => void;
+	supportsExcludeTaskbar: boolean;
+	excludeTaskbar: boolean;
+	onToggleExcludeTaskbar: () => void;
 	onChooseRecordingsDirectory: () => void;
 	onOpenVideoFile: () => void;
 	onOpenProjectBrowser: () => void;
@@ -84,6 +91,15 @@ export function MorePopover({
 					{hideHudFromCapture
 						? t("recording.hideHudFromVideo")
 						: t("recording.showHudInVideo")}
+				</DropdownItem>
+			)}
+			{supportsExcludeTaskbar && (
+				<DropdownItem
+					icon={<CropIcon size={16} />}
+					selected={excludeTaskbar}
+					onClick={onToggleExcludeTaskbar}
+				>
+					{t("recording.excludeTaskbar")}
 				</DropdownItem>
 			)}
 			<DropdownItem

@@ -17,6 +17,7 @@
 		"openProject": "Projekt öffnen",
         "hideHudFromVideo": "HUD in der Aufnahme ausblenden",
         "showHudInVideo": "HUD in der Aufnahme anzeigen",
+        "excludeTaskbar": "Taskleiste ausschließen",
         "hideHud": "HUD ausblenden",
         "closeApp": "App schließen",
 		"screens": "Bildschirme",

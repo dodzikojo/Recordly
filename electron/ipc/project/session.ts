@@ -2,6 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeWebcamBackgroundBlurSettings } from "../../../src/lib/webcamBackgroundBlur";
+import { normalizeScreenCropRegion } from "../../../src/lib/screenCrop";
 import { RECORDING_SESSION_MANIFEST_SUFFIX } from "../constants";
 import type { RecordingSessionData, RecordingSessionManifest } from "../types";
 import { normalizeVideoSourcePath, parseJsonWithByteOrderMark } from "../utils";
@@ -25,9 +26,10 @@ export async function persistRecordingSessionManifest(
 	}
 
 	const normalizedWebcamPath = normalizeVideoSourcePath(session.webcamPath ?? null);
+	const initialCropRegion = normalizeScreenCropRegion(session.initialCropRegion);
 	const manifestPath = getRecordingSessionManifestPath(normalizedVideoPath);
 
-	if (!normalizedWebcamPath) {
+	if (!normalizedWebcamPath && !initialCropRegion) {
 		await fs.rm(manifestPath, { force: true });
 		return;
 	}
@@ -35,9 +37,10 @@ export async function persistRecordingSessionManifest(
 	const manifest: RecordingSessionManifest = {
 		version: 2,
 		videoFileName: path.basename(normalizedVideoPath),
-		webcamFileName: path.basename(normalizedWebcamPath),
+		webcamFileName: normalizedWebcamPath ? path.basename(normalizedWebcamPath) : null,
 		timeOffsetMs: normalizeRecordingTimeOffsetMs(session.timeOffsetMs),
 		webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(session.webcamBackgroundBlur),
+		initialCropRegion,
 	};
 
 	await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
@@ -73,6 +76,7 @@ export async function resolveRecordingSessionManifest(
 				webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(
 					parsed.webcamBackgroundBlur,
 				),
+				initialCropRegion: normalizeScreenCropRegion(parsed.initialCropRegion),
 			};
 		}
 
@@ -89,6 +93,7 @@ export async function resolveRecordingSessionManifest(
 			webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(
 				parsed.webcamBackgroundBlur,
 			),
+			initialCropRegion: normalizeScreenCropRegion(parsed.initialCropRegion),
 		};
 	} catch {
 		return null;
@@ -146,5 +151,6 @@ export async function resolveRecordingSession(
 		videoPath: normalizedVideoPath,
 		webcamPath: linkedWebcamPath,
 		webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(undefined),
+		initialCropRegion: null,
 	};
 }
