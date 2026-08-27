@@ -17,6 +17,7 @@
 		"openProject": "開啟專案",
 		"hideHudFromVideo": "錄製時隱藏 HUD",
 		"showHudInVideo": "錄製時顯示 HUD",
+		"excludeTaskbar": "排除工作列",
 		"hideHud": "隱藏 HUD",
 		"closeApp": "關閉應用程式",
 		"screens": "螢幕",

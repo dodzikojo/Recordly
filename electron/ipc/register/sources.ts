@@ -15,6 +15,7 @@ import {
 	stopWindowBoundsCapture,
 } from "../cursor/bounds";
 import { reassertHudOverlayMousePassthrough } from "../../windows";
+import { calculateWorkAreaCropRegion } from "../../../src/lib/screenCrop";
 
 const execFileAsync = promisify(execFile);
 const SOURCE_LIST_CACHE_TTL_MS = 1200;
@@ -314,6 +315,31 @@ export function registerSourceHandlers({
 			sourceSelectorWin.close();
 		}
 		return selectedSource;
+	});
+
+	ipcMain.handle("get-taskbar-crop-region", (_, requestedSource?: SelectedSource | null) => {
+		if (process.platform !== "win32") {
+			return { success: true, cropRegion: null };
+		}
+
+		const source = requestedSource ?? selectedSource;
+		const isWindow = source?.sourceType === "window" || source?.id?.startsWith("window:");
+		if (!source || isWindow) {
+			return { success: true, cropRegion: null };
+		}
+
+		try {
+			return {
+				success: true,
+				cropRegion: calculateWorkAreaCropRegion(
+					getDisplayBoundsForSource(source),
+					getDisplayWorkAreaForSource(source),
+				),
+			};
+		} catch (error) {
+			console.warn("Failed to resolve the taskbar crop region:", error);
+			return { success: false, cropRegion: null, error: String(error) };
+		}
 	});
 
 	ipcMain.handle("show-source-highlight", async (_, source: SelectedSource) => {

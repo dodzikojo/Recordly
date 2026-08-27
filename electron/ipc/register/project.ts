@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeWebcamBackgroundBlurSettings } from "../../../src/lib/webcamBackgroundBlur";
+import { normalizeScreenCropRegion } from "../../../src/lib/screenCrop";
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { RECORDINGS_DIR } from "../../appPaths";
 import { buildMediaUrl, getMediaServerBaseUrl } from "../../mediaServer";
@@ -609,8 +610,12 @@ export function registerProjectHandlers() {
     return { success: true, webcamPath: nextSession.webcamPath ?? null }
   })
 
-  ipcMain.handle('set-current-recording-session', async (_, session: { videoPath: string; webcamPath?: string | null; timeOffsetMs?: number; hideOverlayCursorByDefault?: boolean; webcamBackgroundBlur?: unknown }, options?: { preserveProjectPath?: boolean }) => {
+  ipcMain.handle('set-current-recording-session', async (_, session: { videoPath: string; webcamPath?: string | null; timeOffsetMs?: number; hideOverlayCursorByDefault?: boolean; webcamBackgroundBlur?: unknown; initialCropRegion?: unknown }, options?: { preserveProjectPath?: boolean }) => {
     const normalizedVideoPath = normalizeVideoSourcePath(session.videoPath) ?? session.videoPath
+    const existingInitialCropRegion =
+      currentRecordingSession?.videoPath === normalizedVideoPath
+        ? currentRecordingSession.initialCropRegion
+        : null
     setCurrentVideoPath(normalizedVideoPath)
     setCurrentRecordingSession({
       videoPath: normalizedVideoPath,
@@ -618,6 +623,9 @@ export function registerProjectHandlers() {
       timeOffsetMs: normalizeRecordingTimeOffsetMs(session.timeOffsetMs),
       hideOverlayCursorByDefault: normalizeBoolean(session.hideOverlayCursorByDefault),
       webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(session.webcamBackgroundBlur),
+      initialCropRegion: Object.prototype.hasOwnProperty.call(session, 'initialCropRegion')
+        ? normalizeScreenCropRegion(session.initialCropRegion)
+        : existingInitialCropRegion,
     });
     await rememberApprovedLocalReadPath(currentRecordingSession!.videoPath)
     await rememberApprovedLocalReadPath(currentRecordingSession!.webcamPath)

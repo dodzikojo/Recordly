@@ -7,6 +7,7 @@ import {
 	type WebcamBackgroundBlurSettings,
 } from "@/lib/webcamBackgroundBlur";
 import { getEffectiveRecordingDurationMs } from "@/lib/mediaTiming";
+import { normalizeScreenCropRegion, type ScreenCropRegion } from "@/lib/screenCrop";
 import {
 	getVideoExtensionForMimeType,
 	isWebmMimeType,
@@ -148,6 +149,8 @@ type UseScreenRecorderReturn = {
 	setMicrophoneDeviceId: (deviceId: string | undefined) => void;
 	systemAudioEnabled: boolean;
 	setSystemAudioEnabled: (enabled: boolean) => void;
+	excludeTaskbar: boolean;
+	setExcludeTaskbar: (enabled: boolean) => void;
 	webcamEnabled: boolean;
 	setWebcamEnabled: (enabled: boolean) => void;
 	webcamDeviceId: string | undefined;
@@ -390,6 +393,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
 	const [microphoneDeviceId, setMicrophoneDeviceId] = useState<string | undefined>(undefined);
 	const [systemAudioEnabled, setSystemAudioEnabled] = useState(false);
+	const [excludeTaskbar, setExcludeTaskbar] = useState(false);
 	const [webcamEnabled, setWebcamEnabled] = useState(false);
 	const [webcamDeviceId, setWebcamDeviceId] = useState<string | undefined>(undefined);
 	const [webcamBackgroundBlur, setWebcamBackgroundBlur] = useState<WebcamBackgroundBlurSettings>({
@@ -409,6 +413,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const webcamStartTime = useRef<number | null>(null);
 	const webcamTimeOffsetMs = useRef(0);
 	const recordingSessionTimestamp = useRef<number | null>(null);
+	const initialCropRegion = useRef<ScreenCropRegion | null>(null);
 	const nativeScreenRecording = useRef(false);
 	const nativeWindowsRecording = useRef(false);
 	const nativeWarmStartActive = useRef(false);
@@ -752,19 +757,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			console.log("[PERF:RENDERER] Finalize Session & Switch to Editor: STARTED");
 			const shouldHideOverlayCursor = hideEditorOverlayCursorByDefault.current;
 			try {
-				if (webcamPath) {
-					await window.electronAPI.setCurrentRecordingSession({
-						videoPath,
-						webcamPath,
-						timeOffsetMs: webcamTimeOffsetMs.current,
-						hideOverlayCursorByDefault: shouldHideOverlayCursor,
-						webcamBackgroundBlur,
-					});
-				} else {
-					await window.electronAPI.setCurrentVideoPath(videoPath, {
-						hideOverlayCursorByDefault: shouldHideOverlayCursor,
-					});
-				}
+				await window.electronAPI.setCurrentRecordingSession({
+					videoPath,
+					webcamPath,
+					timeOffsetMs: webcamTimeOffsetMs.current,
+					hideOverlayCursorByDefault: shouldHideOverlayCursor,
+					webcamBackgroundBlur,
+					initialCropRegion: initialCropRegion.current,
+				});
 			} catch (error) {
 				console.error("Failed to persist recording session metadata:", error);
 
@@ -1139,6 +1139,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const prepareRecordingStart = useCallback(async () => {
 		const platform = await window.electronAPI.getPlatform();
 		hideEditorOverlayCursorByDefault.current = false;
+		initialCropRegion.current = null;
 		const existingSource = await window.electronAPI.getSelectedSource();
 		const selectedSource =
 			existingSource ?? (platform === "linux" ? LINUX_PORTAL_SOURCE : null);
@@ -1152,6 +1153,24 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				await window.electronAPI.selectSource(selectedSource);
 			} catch (err) {
 				console.warn("Failed to persist Linux portal sentinel source:", err);
+			}
+		}
+
+		if (
+			platform === "win32" &&
+			excludeTaskbar &&
+			(selectedSource.sourceType === "screen" || selectedSource.id?.startsWith("screen:"))
+		) {
+			try {
+				const result = await window.electronAPI.getTaskbarCropRegion(selectedSource);
+				if (result.success) {
+					initialCropRegion.current = normalizeScreenCropRegion(result.cropRegion);
+				}
+			} catch (error) {
+				console.warn(
+					"Failed to calculate the taskbar crop; recording the full display:",
+					error,
+				);
 			}
 		}
 
@@ -1219,6 +1238,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			micLabel,
 		};
 	}, [
+		excludeTaskbar,
 		logNativeCaptureDiagnostics,
 		microphoneDeviceId,
 		microphoneEnabled,
@@ -1409,6 +1429,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 							timeOffsetMs: webcamTimeOffsetMs.current,
 							hideOverlayCursorByDefault: hideEditorOverlayCursorByDefault.current,
 							webcamBackgroundBlur,
+							initialCropRegion: initialCropRegion.current,
 						});
 
 						console.log(
@@ -1507,6 +1528,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 					setMicrophoneDeviceId(result.microphoneDeviceId);
 				}
 				setSystemAudioEnabled(result.systemAudioEnabled);
+				setExcludeTaskbar(result.excludeTaskbar);
 				setWebcamBackgroundBlur(
 					normalizeWebcamBackgroundBlurSettings(result.webcamBackgroundBlur),
 				);
@@ -1527,6 +1549,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const persistSystemAudioEnabled = useCallback((enabled: boolean) => {
 		setSystemAudioEnabled(enabled);
 		void window.electronAPI.setRecordingPreferences({ systemAudioEnabled: enabled });
+	}, []);
+
+	const persistExcludeTaskbar = useCallback((enabled: boolean) => {
+		setExcludeTaskbar(enabled);
+		void window.electronAPI.setRecordingPreferences({ excludeTaskbar: enabled });
 	}, []);
 
 	const persistWebcamBackgroundBlur = useCallback((settings: WebcamBackgroundBlurSettings) => {
@@ -2184,6 +2211,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 										hideOverlayCursorByDefault:
 											hideEditorOverlayCursorByDefault.current,
 										webcamBackgroundBlur,
+										initialCropRegion: initialCropRegion.current,
 									});
 								}
 							} finally {
@@ -2410,6 +2438,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		setMicrophoneDeviceId: persistMicrophoneDeviceId,
 		systemAudioEnabled,
 		setSystemAudioEnabled: persistSystemAudioEnabled,
+		excludeTaskbar,
+		setExcludeTaskbar: persistExcludeTaskbar,
 		webcamEnabled,
 		setWebcamEnabled,
 		webcamDeviceId,

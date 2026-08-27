@@ -225,6 +225,11 @@ interface Window {
 		selectSource: (source: ProcessedDesktopSource) => Promise<ProcessedDesktopSource>;
 		showSourceHighlight: (source: ProcessedDesktopSource) => Promise<{ success: boolean }>;
 		getSelectedSource: () => Promise<ProcessedDesktopSource | null>;
+		getTaskbarCropRegion: (source: ProcessedDesktopSource) => Promise<{
+			success: boolean;
+			cropRegion: { x: number; y: number; width: number; height: number } | null;
+			error?: string;
+		}>;
 		onSelectedSourceChanged: (
 			callback: (source: ProcessedDesktopSource | null) => void,
 		) => () => void;
@@ -719,6 +724,7 @@ interface Window {
 				timeOffsetMs?: number;
 				hideOverlayCursorByDefault?: boolean;
 				webcamBackgroundBlur?: { enabled: boolean; amount: number };
+				initialCropRegion?: { x: number; y: number; width: number; height: number } | null;
 			},
 			options?: { preserveProjectPath?: boolean },
 		) => Promise<{ success: boolean }>;
@@ -730,6 +736,7 @@ interface Window {
 				timeOffsetMs?: number;
 				hideOverlayCursorByDefault?: boolean;
 				webcamBackgroundBlur?: { enabled: boolean; amount: number };
+				initialCropRegion?: { x: number; y: number; width: number; height: number } | null;
 			};
 		}>;
 		getCurrentVideoPath: () => Promise<{ success: boolean; path?: string }>;
@@ -883,6 +890,7 @@ interface Window {
 			microphoneEnabled: boolean;
 			microphoneDeviceId?: string;
 			systemAudioEnabled: boolean;
+			excludeTaskbar: boolean;
 			webcamBackgroundBlur: { enabled: boolean; amount: number };
 		}>;
 		getRecordingAudioLabConfig: () => Promise<{
@@ -893,6 +901,7 @@ interface Window {
 			microphoneEnabled?: boolean;
 			microphoneDeviceId?: string;
 			systemAudioEnabled?: boolean;
+			excludeTaskbar?: boolean;
 			webcamBackgroundBlur?: { enabled: boolean; amount: number };
 		}) => Promise<{ success: boolean; error?: string }>;
 		/** Countdown timer before recording */

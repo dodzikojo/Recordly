@@ -64,3 +64,36 @@ describe("recording session background blur", () => {
 		});
 	});
 });
+
+describe("recording session initial crop", () => {
+	it("round-trips an initial crop without requiring a webcam sidecar", async () => {
+		const { videoPath } = await createRecordingFixture();
+		await persistRecordingSessionManifest({
+			videoPath,
+			initialCropRegion: { x: 0, y: 0, width: 1, height: 0.95 },
+		});
+
+		await expect(resolveRecordingSessionManifest(videoPath)).resolves.toMatchObject({
+			videoPath,
+			webcamPath: null,
+			initialCropRegion: { x: 0, y: 0, width: 1, height: 0.95 },
+		});
+	});
+
+	it("drops invalid crop geometry from old manifests", async () => {
+		const { videoPath } = await createRecordingFixture();
+		await fs.writeFile(
+			getRecordingSessionManifestPath(videoPath),
+			JSON.stringify({
+				version: 2,
+				videoFileName: path.basename(videoPath),
+				initialCropRegion: { x: 2, y: 0, width: -1, height: 1 },
+			}),
+			"utf-8",
+		);
+
+		await expect(resolveRecordingSessionManifest(videoPath)).resolves.toMatchObject({
+			initialCropRegion: null,
+		});
+	});
+});
