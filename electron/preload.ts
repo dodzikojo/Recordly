@@ -270,7 +270,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			anchorY: number;
 			aspectRatio: number;
 		}>;
-		zoomTelemetry?: Array<{ timeMs: number; scale: number; x: number; y: number }>;
+		zoomTelemetry?: Array<{
+			timeMs: number;
+			scale: number;
+			x: number;
+			y: number;
+		}>;
 		timelineSegments?: Array<{
 			sourceStartMs: number;
 			sourceEndMs: number;
@@ -289,7 +294,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			outputDurationSec?: number;
 			trimSegments?: Array<{ startMs: number; endMs: number }>;
 			editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-			editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+			editedTrackSegments?: Array<{
+				startMs: number;
+				endMs: number;
+				speed: number;
+			}>;
 			editedAudioData?: ArrayBuffer;
 			editedAudioMimeType?: string | null;
 		};
@@ -369,7 +378,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			outputDurationSec?: number;
 			trimSegments?: Array<{ startMs: number; endMs: number }>;
 			editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-			editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+			editedTrackSegments?: Array<{
+				startMs: number;
+				endMs: number;
+				speed: number;
+			}>;
 			editedAudioData?: ArrayBuffer;
 			editedAudioMimeType?: string | null;
 		},
@@ -417,7 +430,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			outputDurationSec?: number;
 			trimSegments?: Array<{ startMs: number; endMs: number }>;
 			editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-			editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+			editedTrackSegments?: Array<{
+				startMs: number;
+				endMs: number;
+				speed: number;
+			}>;
 			editedAudioData?: ArrayBuffer;
 			editedAudioMimeType?: string | null;
 		},
@@ -439,7 +456,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			outputDurationSec?: number;
 			trimSegments?: Array<{ startMs: number; endMs: number }>;
 			editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-			editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+			editedTrackSegments?: Array<{
+				startMs: number;
+				endMs: number;
+				speed: number;
+			}>;
 			editedAudioData?: ArrayBuffer;
 			editedAudioMimeType?: string | null;
 		},
@@ -476,7 +497,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	getVideoAudioFallbackPaths: (videoPath: string) => {
 		return ipcRenderer.invoke("get-video-audio-fallback-paths", videoPath);
 	},
-	getSources: async (opts: Electron.SourcesOptions) => {
+	getSources: async (opts: Electron.SourcesOptions & { forceRefresh?: boolean }) => {
 		return await ipcRenderer.invoke("get-sources", opts);
 	},
 	switchToEditor: () => {
@@ -496,6 +517,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 	getTaskbarCropRegion: (source: ProcessedDesktopSource) => {
 		return ipcRenderer.invoke("get-taskbar-crop-region", source);
+	},
+	getWindowFramingGeometry: (source: ProcessedDesktopSource) => {
+		return ipcRenderer.invoke("get-window-framing-geometry", source);
 	},
 	onSelectedSourceChanged: (callback: (source: ProcessedDesktopSource | null) => void) => {
 		const listener = (
@@ -742,7 +766,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			timeOffsetMs?: number;
 			hideOverlayCursorByDefault?: boolean;
 			webcamBackgroundBlur?: { enabled: boolean; amount: number };
-			initialCropRegion?: { x: number; y: number; width: number; height: number } | null;
+			initialCropRegion?: {
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+			} | null;
 		},
 		options?: { preserveProjectPath?: boolean },
 	) => {
@@ -892,7 +921,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	) => {
 		const listener = (
 			_event: Electron.IpcRendererEvent,
-			payload: { version: string; detail: string; delayMs: number; isPreview?: boolean },
+			payload: {
+				version: string;
+				detail: string;
+				delayMs: number;
+				isPreview?: boolean;
+			},
 		) => callback(payload);
 		ipcRenderer.on("update-ready-toast", listener);
 		return () => ipcRenderer.removeListener("update-ready-toast", listener);
@@ -978,6 +1012,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		microphoneDeviceId?: string;
 		systemAudioEnabled?: boolean;
 		excludeTaskbar?: boolean;
+		windowFraming?: { enabled: boolean; topInsetDip: number };
 		webcamBackgroundBlur?: { enabled: boolean; amount: number };
 	}) => ipcRenderer.invoke("set-recording-preferences", prefs),
 	getCountdownDelay: () => ipcRenderer.invoke("get-countdown-delay"),

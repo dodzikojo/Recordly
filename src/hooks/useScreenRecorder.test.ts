@@ -3,11 +3,84 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createBrowserRecordingOptions,
 	createProcessedMicrophoneConstraints,
+	measureWindowFramingAtRecordingStart,
 	normalizeBrowserMicrophoneProfile,
 	resolveBrowserCaptureCursorPolicy,
 	shouldUseNativeWindowsCaptureForSource,
 	stopAndDiscardNativeCapture,
 } from "./useScreenRecorder";
+
+describe("measureWindowFramingAtRecordingStart", () => {
+	const geometry = {
+		frameBounds: { x: 100, y: 50, width: 1600, height: 1000 },
+		clientBounds: { x: 108, y: 90, width: 1584, height: 952 },
+		dpiScale: 1.5,
+		clientDetected: true,
+	};
+
+	it("remeasures a Windows window and combines its client crop with the current inset", async () => {
+		const getGeometry = vi.fn().mockResolvedValue({ success: true, geometry });
+
+		await expect(
+			measureWindowFramingAtRecordingStart({
+				platform: "win32",
+				source: { id: "window:527526:0", sourceType: "window" },
+				settings: { enabled: true, topInsetDip: 80 },
+				getGeometry,
+			}),
+		).resolves.toEqual({
+			attempted: true,
+			resolved: true,
+			clientDetected: true,
+			cropRegion: {
+				x: 8 / 1600,
+				y: 160 / 1000,
+				width: 1584 / 1600,
+				height: 832 / 1000,
+			},
+		});
+		expect(getGeometry).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		["win32", { id: "screen:1:0", sourceType: "screen" as const }, true],
+		["darwin", { id: "window:123:0", sourceType: "window" as const }, true],
+		["linux", { id: "window:123:0", sourceType: "window" as const }, true],
+		["win32", { id: "window:123:0", sourceType: "window" as const }, false],
+	])("does not measure unsupported or disabled sources", async (platform, source, enabled) => {
+		const getGeometry = vi.fn();
+		await expect(
+			measureWindowFramingAtRecordingStart({
+				platform,
+				source,
+				settings: { enabled, topInsetDip: 80 },
+				getGeometry,
+			}),
+		).resolves.toEqual({
+			attempted: false,
+			resolved: false,
+			clientDetected: false,
+			cropRegion: null,
+		});
+		expect(getGeometry).not.toHaveBeenCalled();
+	});
+
+	it("reports a failed remeasurement without manufacturing a crop", async () => {
+		await expect(
+			measureWindowFramingAtRecordingStart({
+				platform: "win32",
+				source: { id: "window:527526:0", sourceType: "window" },
+				settings: { enabled: true, topInsetDip: 80 },
+				getGeometry: vi.fn().mockResolvedValue({ success: false, geometry: null }),
+			}),
+		).resolves.toEqual({
+			attempted: true,
+			resolved: false,
+			clientDetected: false,
+			cropRegion: null,
+		});
+	});
+});
 
 type RecordingState = "inactive" | "recording" | "paused";
 

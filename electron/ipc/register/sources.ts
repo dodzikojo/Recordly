@@ -14,18 +14,17 @@ import {
 	resolveLinuxWindowBounds,
 	stopWindowBoundsCapture,
 } from "../cursor/bounds";
+import { resolveWindowsWindowGeometry } from "../cursor/windowsWindowGeometry";
 import { reassertHudOverlayMousePassthrough } from "../../windows";
 import { calculateWorkAreaCropRegion } from "../../../src/lib/screenCrop";
 
 const execFileAsync = promisify(execFile);
 const SOURCE_LIST_CACHE_TTL_MS = 1200;
-let sourceListCache:
-	| {
-			key: string;
-			expiresAt: number;
-			value: Array<Record<string, unknown>>;
-	  }
-	| null = null;
+let sourceListCache: {
+	key: string;
+	expiresAt: number;
+	value: Array<Record<string, unknown>>;
+} | null = null;
 
 function normalizeDesktopSourceName(value: string) {
 	return value.trim().replace(/\s+/g, " ").toLowerCase();
@@ -49,18 +48,28 @@ export function registerSourceHandlers({
 	getSourceSelectorWindow: () => BrowserWindow | null;
 }) {
 	ipcMain.handle("get-sources", async (_, opts) => {
+		const { forceRefresh = false, ...captureOptions } = opts ?? {};
 		const cacheKey = JSON.stringify({
-			types: opts?.types,
-			thumbnailSize: opts?.thumbnailSize,
-			fetchWindowIcons: opts?.fetchWindowIcons,
+			types: captureOptions.types,
+			thumbnailSize: captureOptions.thumbnailSize,
+			fetchWindowIcons: captureOptions.fetchWindowIcons,
 		});
-		if (sourceListCache && sourceListCache.key === cacheKey && sourceListCache.expiresAt > Date.now()) {
+		if (
+			!forceRefresh &&
+			sourceListCache &&
+			sourceListCache.key === cacheKey &&
+			sourceListCache.expiresAt > Date.now()
+		) {
 			return sourceListCache.value;
 		}
 
-		const includeScreens = Array.isArray(opts?.types) ? opts.types.includes("screen") : true;
-		const includeWindows = Array.isArray(opts?.types) ? opts.types.includes("window") : true;
-		const includeWindowIcons = Boolean(opts?.fetchWindowIcons);
+		const includeScreens = Array.isArray(captureOptions.types)
+			? captureOptions.types.includes("screen")
+			: true;
+		const includeWindows = Array.isArray(captureOptions.types)
+			? captureOptions.types.includes("window")
+			: true;
+		const includeWindowIcons = Boolean(captureOptions.fetchWindowIcons);
 		const electronTypes = [
 			...(includeScreens ? ["screen" as const] : []),
 			...(includeWindows ? ["window" as const] : []),
@@ -69,7 +78,7 @@ export function registerSourceHandlers({
 			electronTypes.length > 0
 				? await desktopCapturer
 						.getSources({
-							...opts,
+							...captureOptions,
 							types: electronTypes,
 						})
 						.catch((error) => {
@@ -237,13 +246,12 @@ export function registerSourceHandlers({
 						thumbnail: electronWindowSource?.thumbnail
 							? electronWindowSource.thumbnail.toDataURL()
 							: null,
-						appIcon:
-							includeWindowIcons
-								? (source.appIcon ??
-									(electronWindowSource?.appIcon
-										? electronWindowSource.appIcon.toDataURL()
-										: null))
-								: null,
+						appIcon: includeWindowIcons
+							? (source.appIcon ??
+								(electronWindowSource?.appIcon
+									? electronWindowSource.appIcon.toDataURL()
+									: null))
+							: null,
 						appName: source.appName,
 						windowTitle: source.windowTitle,
 						sourceType: "window" as const,
@@ -342,6 +350,43 @@ export function registerSourceHandlers({
 		}
 	});
 
+	ipcMain.handle(
+		"get-window-framing-geometry",
+		async (_, requestedSource?: SelectedSource | null) => {
+			if (process.platform !== "win32") {
+				return {
+					success: false,
+					geometry: null,
+					error: "Window framing is Windows-only",
+				};
+			}
+
+			const source = requestedSource ?? selectedSource;
+			const isWindow = source?.sourceType === "window" || source?.id?.startsWith("window:");
+			if (!source || !isWindow) {
+				return {
+					success: false,
+					geometry: null,
+					error: "Select a window first",
+				};
+			}
+
+			try {
+				const geometry = await resolveWindowsWindowGeometry(source);
+				return geometry
+					? { success: true, geometry }
+					: {
+							success: false,
+							geometry: null,
+							error: "Window geometry is unavailable",
+						};
+			} catch (error) {
+				console.warn("Failed to resolve window framing geometry:", error);
+				return { success: false, geometry: null, error: String(error) };
+			}
+		},
+	);
+
 	ipcMain.handle("show-source-highlight", async (_, source: SelectedSource) => {
 		try {
 			const isWindow = source.id?.startsWith("window:");
@@ -391,7 +436,12 @@ export function registerSourceHandlers({
 			}
 
 			// ── 2. Resolve bounds ──
-			let bounds: { x: number; y: number; width: number; height: number } | null = null;
+			let bounds: {
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+			} | null = null;
 
 			if (source.id?.startsWith("screen:")) {
 				bounds =
@@ -509,15 +559,17 @@ body{background:transparent;overflow:hidden;width:100vw;height:100vh}
 </style></head><body>
 <div class="glow-wrap"></div>
 <div class="border-wrap"></div>
-</body></html>`
+</body></html>`;
 
 			try {
-				await highlightWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+				await highlightWin.loadURL(
+					`data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
+				);
 			} catch (loadError) {
 				if (!highlightWin.isDestroyed()) {
-					highlightWin.close()
+					highlightWin.close();
 				}
-				throw loadError
+				throw loadError;
 			}
 
 			// The highlight window appearing (even with focusable:false) can corrupt
@@ -527,8 +579,8 @@ body{background:transparent;overflow:hidden;width:100vw;height:100vh}
 			reassertHudOverlayMousePassthrough();
 
 			const highlightCloseTimer = setTimeout(() => {
-				if (!highlightWin.isDestroyed()) highlightWin.close()
-			}, 1700)
+				if (!highlightWin.isDestroyed()) highlightWin.close();
+			}, 1700);
 
 			highlightWin.on("closed", () => {
 				clearTimeout(highlightCloseTimer);
@@ -537,32 +589,31 @@ body{background:transparent;overflow:hidden;width:100vw;height:100vh}
 				reassertHudOverlayMousePassthrough();
 			});
 
-			return { success: true }
-    } catch (error) {
-      console.error('Failed to show source highlight:', error)
-      return { success: false }
-    }
-  })
+			return { success: true };
+		} catch (error) {
+			console.error("Failed to show source highlight:", error);
+			return { success: false };
+		}
+	});
 
-  ipcMain.handle('get-selected-source', () => {
-    return selectedSource
-  })
+	ipcMain.handle("get-selected-source", () => {
+		return selectedSource;
+	});
 
-  ipcMain.handle('open-source-selector', () => {
-    const sourceSelectorWin = getSourceSelectorWindow()
-    if (sourceSelectorWin) {
-      sourceSelectorWin.focus()
-      return
-    }
-    createSourceSelectorWindow()
-  })
-  ipcMain.handle('switch-to-editor', () => {
-    console.log('[switch-to-editor] Opening editor window')
-    const sourceSelectorWin = getSourceSelectorWindow()
-    if (sourceSelectorWin && !sourceSelectorWin.isDestroyed()) {
-      sourceSelectorWin.close()
-    }
-    createEditorWindow()
-  })
-
+	ipcMain.handle("open-source-selector", () => {
+		const sourceSelectorWin = getSourceSelectorWindow();
+		if (sourceSelectorWin) {
+			sourceSelectorWin.focus();
+			return;
+		}
+		createSourceSelectorWindow();
+	});
+	ipcMain.handle("switch-to-editor", () => {
+		console.log("[switch-to-editor] Opening editor window");
+		const sourceSelectorWin = getSourceSelectorWindow();
+		if (sourceSelectorWin && !sourceSelectorWin.isDestroyed()) {
+			sourceSelectorWin.close();
+		}
+		createEditorWindow();
+	});
 }

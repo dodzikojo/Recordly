@@ -3,12 +3,18 @@ import {
 	normalizeWebcamBackgroundBlurSettings,
 	type WebcamBackgroundBlurSettings,
 } from "../../src/lib/webcamBackgroundBlur";
+import {
+	DEFAULT_WINDOW_FRAMING_SETTINGS,
+	normalizeWindowFramingSettings,
+	type WindowFramingSettings,
+} from "../../src/lib/windowFraming";
 
 export interface RecordingPreferences {
 	microphoneEnabled: boolean;
 	microphoneDeviceId?: string;
 	systemAudioEnabled: boolean;
 	excludeTaskbar: boolean;
+	windowFraming: WindowFramingSettings;
 	webcamBackgroundBlur: WebcamBackgroundBlurSettings;
 }
 
@@ -22,6 +28,9 @@ export function normalizeRecordingPreferences(value: unknown): RecordingPreferen
 				: undefined,
 		systemAudioEnabled: candidate.systemAudioEnabled === true,
 		excludeTaskbar: candidate.excludeTaskbar === true,
+		windowFraming: normalizeWindowFramingSettings(
+			candidate.windowFraming ?? DEFAULT_WINDOW_FRAMING_SETTINGS,
+		),
 		webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(
 			candidate.webcamBackgroundBlur ?? DEFAULT_WEBCAM_BACKGROUND_BLUR,
 		),

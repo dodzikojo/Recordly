@@ -74,6 +74,8 @@ function LaunchWindowContent() {
 		setSystemAudioEnabled,
 		excludeTaskbar,
 		setExcludeTaskbar,
+		windowFraming,
+		setWindowFraming,
 		webcamEnabled,
 		setWebcamEnabled,
 		webcamDeviceId,
@@ -91,6 +93,7 @@ function LaunchWindowContent() {
 
 	const {
 		selectedSource,
+		selectedSourceLabel,
 		hasSelectedSource,
 		projectLibraryEntries,
 		handleSourceSelect,
@@ -231,6 +234,9 @@ function LaunchWindowContent() {
 				<>
 					<SourcePopover
 						selectedSource={selectedSource}
+						supportsWindowFraming={platform === "win32"}
+						windowFraming={windowFraming}
+						onWindowFramingChange={setWindowFraming}
 						onSourceSelect={handleSourceSelect}
 						onOpen={beginInteractiveHudAction}
 						trigger={
@@ -238,11 +244,11 @@ function LaunchWindowContent() {
 								variant="outline"
 								size="lg"
 								className={`${styles.electronNoDrag} group gap-2 px-3 min-w-0 max-w-[180px] rounded-[11px] font-medium text-[12px] shrink-0 border-[var(--launch-border)] bg-[var(--launch-surface)] text-[var(--launch-text)] hover:border-[var(--launch-border-strong)] hover:bg-[var(--launch-hover)] transition-all ${openId === "sources" ? "border-[var(--launch-border-strong)] bg-[var(--launch-hover)]" : ""}`}
-								title={selectedSource}
+								title={selectedSourceLabel}
 							>
 								<MonitorIcon size={16} className="shrink-0" />
 								<div className="flex-1 min-w-0 overflow-hidden">
-									<MarqueeText text={selectedSource} />
+									<MarqueeText text={selectedSourceLabel} />
 								</div>
 								<CaretUpIcon
 									size={10}
@@ -384,7 +390,14 @@ function LaunchWindowContent() {
 				onToggleHudCaptureProtection={() => {
 					void toggleHudCaptureProtection();
 				}}
-				supportsExcludeTaskbar={platform === "win32"}
+				supportsExcludeTaskbar={
+					platform === "win32" &&
+					Boolean(
+						selectedSource &&
+							(selectedSource.sourceType === "screen" ||
+								selectedSource.id.startsWith("screen:")),
+					)
+				}
 				excludeTaskbar={excludeTaskbar}
 				onToggleExcludeTaskbar={() => setExcludeTaskbar(!excludeTaskbar)}
 				onChooseRecordingsDirectory={() => {
@@ -452,7 +465,10 @@ function LaunchWindowContent() {
 
 	return (
 		<HudInteractionContext.Provider
-			value={{ onMouseEnter: handleHudMouseEnter, onMouseLeave: handleHudMouseLeave }}
+			value={{
+				onMouseEnter: handleHudMouseEnter,
+				onMouseLeave: handleHudMouseLeave,
+			}}
 		>
 			<div
 				className="w-full flex justify-center bg-transparent overflow-visible items-end pb-5 pointer-events-none"

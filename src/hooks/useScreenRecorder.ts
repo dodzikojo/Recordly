@@ -9,6 +9,13 @@ import {
 import { getEffectiveRecordingDurationMs } from "@/lib/mediaTiming";
 import { normalizeScreenCropRegion, type ScreenCropRegion } from "@/lib/screenCrop";
 import {
+	calculateWindowFramingCropRegion,
+	DEFAULT_WINDOW_FRAMING_SETTINGS,
+	normalizeWindowFramingSettings,
+	type WindowFramingGeometry,
+	type WindowFramingSettings,
+} from "@/lib/windowFraming";
+import {
 	getVideoExtensionForMimeType,
 	isWebmMimeType,
 	selectRecordingMimeType,
@@ -45,6 +52,7 @@ const WEBCAM_FRAME_RATE = 30;
 const WEBCAM_SUFFIX = "-webcam";
 const MICROPHONE_FALLBACK_ERROR_TOAST_ID = "recording-microphone-fallback-error";
 const MICROPHONE_SIDECAR_ERROR_TOAST_ID = "recording-microphone-sidecar-error";
+const WINDOW_FRAMING_WARNING_TOAST_ID = "recording-window-framing-warning";
 export type BrowserMicrophoneProfile =
 	| "processed"
 	| "no-agc"
@@ -57,6 +65,48 @@ export type BrowserCaptureCursorPolicy = {
 	hideOsCursorBeforeRecording: boolean;
 	hideEditorOverlayCursorByDefault: boolean;
 };
+
+type WindowFramingSource = {
+	id?: string;
+	sourceType?: "screen" | "window";
+};
+
+export async function measureWindowFramingAtRecordingStart({
+	platform,
+	source,
+	settings,
+	getGeometry,
+}: {
+	platform: string;
+	source: WindowFramingSource;
+	settings: WindowFramingSettings;
+	getGeometry: () => Promise<{
+		success: boolean;
+		geometry: WindowFramingGeometry | null;
+	}>;
+}) {
+	const isWindowSource = source.sourceType === "window" || source.id?.startsWith("window:");
+	if (platform !== "win32" || !settings.enabled || !isWindowSource) {
+		return { attempted: false, resolved: false, clientDetected: false, cropRegion: null };
+	}
+
+	const result = await getGeometry();
+	if (!result.success || !result.geometry) {
+		return { attempted: true, resolved: false, clientDetected: false, cropRegion: null };
+	}
+
+	const cropRegion = calculateWindowFramingCropRegion({
+		...result.geometry,
+		topInsetDip: settings.topInsetDip,
+	});
+	return {
+		attempted: true,
+		resolved: cropRegion !== null,
+		clientDetected: result.geometry.clientDetected,
+		cropRegion,
+	};
+}
+
 const DEFAULT_BROWSER_MICROPHONE_PROFILE: BrowserMicrophoneProfile = "processed";
 const BROWSER_MICROPHONE_PROFILES = new Set<BrowserMicrophoneProfile>([
 	"processed",
@@ -151,6 +201,8 @@ type UseScreenRecorderReturn = {
 	setSystemAudioEnabled: (enabled: boolean) => void;
 	excludeTaskbar: boolean;
 	setExcludeTaskbar: (enabled: boolean) => void;
+	windowFraming: WindowFramingSettings;
+	setWindowFraming: (settings: WindowFramingSettings) => void;
 	webcamEnabled: boolean;
 	setWebcamEnabled: (enabled: boolean) => void;
 	webcamDeviceId: string | undefined;
@@ -394,6 +446,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const [microphoneDeviceId, setMicrophoneDeviceId] = useState<string | undefined>(undefined);
 	const [systemAudioEnabled, setSystemAudioEnabled] = useState(false);
 	const [excludeTaskbar, setExcludeTaskbar] = useState(false);
+	const [windowFraming, setWindowFraming] = useState<WindowFramingSettings>({
+		...DEFAULT_WINDOW_FRAMING_SETTINGS,
+	});
 	const [webcamEnabled, setWebcamEnabled] = useState(false);
 	const [webcamDeviceId, setWebcamDeviceId] = useState<string | undefined>(undefined);
 	const [webcamBackgroundBlur, setWebcamBackgroundBlur] = useState<WebcamBackgroundBlurSettings>({
@@ -915,7 +970,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 					...(micFallbackPauseIntervals.current.length > 0
 						? {
 								pauseIntervals: micFallbackPauseIntervals.current.map(
-									(interval) => ({ ...interval }),
+									(interval) => ({
+										...interval,
+									}),
 								),
 							}
 						: {}),
@@ -1174,6 +1231,40 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			}
 		}
 
+		if (platform === "win32" && windowFraming.enabled) {
+			try {
+				const measurement = await measureWindowFramingAtRecordingStart({
+					platform,
+					source: selectedSource,
+					settings: windowFraming,
+					getGeometry: () => window.electronAPI.getWindowFramingGeometry(selectedSource),
+				});
+				if (measurement.attempted && measurement.resolved) {
+					initialCropRegion.current = measurement.cropRegion;
+					if (!measurement.clientDetected) {
+						toast.warning(
+							"The window frame could not be detected. Only the additional top inset will be applied.",
+							{ id: WINDOW_FRAMING_WARNING_TOAST_ID, duration: 8000 },
+						);
+					}
+				} else if (measurement.attempted) {
+					toast.warning(
+						"Window framing is unavailable for this source. Recording will continue uncropped.",
+						{ id: WINDOW_FRAMING_WARNING_TOAST_ID, duration: 8000 },
+					);
+				}
+			} catch (error) {
+				console.warn(
+					"Failed to calculate window framing; recording the full window:",
+					error,
+				);
+				toast.warning(
+					"Window framing is unavailable for this source. Recording will continue uncropped.",
+					{ id: WINDOW_FRAMING_WARNING_TOAST_ID, duration: 8000 },
+				);
+			}
+		}
+
 		const permissionsReady = await preparePermissions();
 		if (!permissionsReady) {
 			return null;
@@ -1245,6 +1336,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		preparePermissions,
 		prepareWebcamRecorder,
 		resetRecordingClock,
+		windowFraming,
 	]);
 
 	const discardActiveNativeCapture = useCallback(async () => {
@@ -1418,7 +1510,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 						console.log(
 							"[useScreenRecorder] Emitting setCurrentRecordingSession with:",
-							{ finalPath, webcamPath },
+							{
+								finalPath,
+								webcamPath,
+							},
 						);
 
 						// Update the session state to notify the editor that all background assets (webcam, mic, etc.) are now ready.
@@ -1529,6 +1624,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				}
 				setSystemAudioEnabled(result.systemAudioEnabled);
 				setExcludeTaskbar(result.excludeTaskbar);
+				setWindowFraming(normalizeWindowFramingSettings(result.windowFraming));
 				setWebcamBackgroundBlur(
 					normalizeWebcamBackgroundBlurSettings(result.webcamBackgroundBlur),
 				);
@@ -1538,28 +1634,46 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 	const persistMicrophoneEnabled = useCallback((enabled: boolean) => {
 		setMicrophoneEnabled(enabled);
-		void window.electronAPI.setRecordingPreferences({ microphoneEnabled: enabled });
+		void window.electronAPI.setRecordingPreferences({
+			microphoneEnabled: enabled,
+		});
 	}, []);
 
 	const persistMicrophoneDeviceId = useCallback((deviceId: string | undefined) => {
 		setMicrophoneDeviceId(deviceId);
-		void window.electronAPI.setRecordingPreferences({ microphoneDeviceId: deviceId });
+		void window.electronAPI.setRecordingPreferences({
+			microphoneDeviceId: deviceId,
+		});
 	}, []);
 
 	const persistSystemAudioEnabled = useCallback((enabled: boolean) => {
 		setSystemAudioEnabled(enabled);
-		void window.electronAPI.setRecordingPreferences({ systemAudioEnabled: enabled });
+		void window.electronAPI.setRecordingPreferences({
+			systemAudioEnabled: enabled,
+		});
 	}, []);
 
 	const persistExcludeTaskbar = useCallback((enabled: boolean) => {
 		setExcludeTaskbar(enabled);
-		void window.electronAPI.setRecordingPreferences({ excludeTaskbar: enabled });
+		void window.electronAPI.setRecordingPreferences({
+			excludeTaskbar: enabled,
+		});
+	}, []);
+
+	const persistWindowFraming = useCallback((settings: WindowFramingSettings) => {
+		const normalized = normalizeWindowFramingSettings(settings);
+		setWindowFraming(normalized);
+		void window.electronAPI.setRecordingPreferences({
+			windowFraming: normalized,
+		});
 	}, []);
 
 	const persistWebcamBackgroundBlur = useCallback((settings: WebcamBackgroundBlurSettings) => {
 		const normalized = normalizeWebcamBackgroundBlurSettings(settings);
 		setWebcamBackgroundBlur(normalized);
-		void window.electronAPI.setRecordingPreferences({ webcamBackgroundBlur: normalized });
+		void window.electronAPI.setRecordingPreferences({
+			webcamBackgroundBlur: normalized,
+		});
 	}, []);
 
 	useEffect(() => {
@@ -2440,6 +2554,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		setSystemAudioEnabled: persistSystemAudioEnabled,
 		excludeTaskbar,
 		setExcludeTaskbar: persistExcludeTaskbar,
+		windowFraming,
+		setWindowFraming: persistWindowFraming,
 		webcamEnabled,
 		setWebcamEnabled,
 		webcamDeviceId,

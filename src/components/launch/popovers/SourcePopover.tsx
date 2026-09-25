@@ -1,4 +1,5 @@
 import { useCallback, useMemo, type ReactNode, useState } from "react";
+import type { WindowFramingSettings } from "@/lib/windowFraming";
 import { SourceSelector } from "../SourceSelector";
 import { useLaunchPopoverCoordinator } from "./LaunchPopoverCoordinator";
 import {
@@ -7,23 +8,31 @@ import {
 	isWindowSource,
 	type DesktopSource,
 } from "./launchPopoverTypes";
+import { WindowFramingPanel } from "./WindowFramingPanel";
 
 const POPOVER_ID = "sources";
 
 export function SourcePopover({
 	trigger,
 	selectedSource,
+	supportsWindowFraming,
+	windowFraming,
+	onWindowFramingChange,
 	onSourceSelect,
 	onOpen,
 }: {
 	trigger: ReactNode;
-	selectedSource: string;
+	selectedSource: DesktopSource | null;
+	supportsWindowFraming: boolean;
+	windowFraming: WindowFramingSettings;
+	onWindowFramingChange: (settings: WindowFramingSettings) => void;
 	onSourceSelect: (source: DesktopSource) => Promise<void> | void;
 	onOpen?: () => void;
 }) {
 	const { isOpen, requestOpen, requestClose } = useLaunchPopoverCoordinator();
 	const [sources, setSources] = useState<DesktopSource[]>([]);
 	const [loading, setLoading] = useState(false);
+	const [showWindowFraming, setShowWindowFraming] = useState(false);
 	const open = isOpen(POPOVER_ID);
 
 	const fetchSources = useCallback(async () => {
@@ -45,29 +54,51 @@ export function SourcePopover({
 
 	const screenSources = useMemo(() => sources.filter(isScreenSource), [sources]);
 	const windowSources = useMemo(() => sources.filter(isWindowSource), [sources]);
+	const framingSource =
+		supportsWindowFraming && selectedSource && isWindowSource(selectedSource)
+			? selectedSource
+			: null;
 
 	return (
 		<SourceSelector
 			screenSources={screenSources}
 			windowSources={windowSources}
-			selectedSource={selectedSource}
+			selectedSource={selectedSource?.name ?? "Screen"}
+			selectedSourceId={selectedSource?.id}
 			loading={loading}
 			onSourceSelect={async (source) => {
 				try {
 					await onSourceSelect(source);
-					requestClose(POPOVER_ID);
+					if (supportsWindowFraming && isWindowSource(source)) {
+						setShowWindowFraming(true);
+					} else {
+						requestClose(POPOVER_ID);
+					}
 				} catch (error) {
 					console.error("Failed to select source:", error);
 				}
 			}}
 			onFetchSources={fetchSources}
 			open={open}
+			panel={
+				showWindowFraming && framingSource ? (
+					<WindowFramingPanel
+						source={framingSource}
+						settings={windowFraming}
+						onSettingsChange={onWindowFramingChange}
+						onBack={() => setShowWindowFraming(false)}
+						onDone={() => requestClose(POPOVER_ID)}
+					/>
+				) : undefined
+			}
 			onOpenChange={(nextOpen) => {
 				if (!nextOpen) {
+					setShowWindowFraming(false);
 					requestClose(POPOVER_ID);
 					return;
 				}
 				onOpen?.();
+				setShowWindowFraming(false);
 				requestOpen(POPOVER_ID);
 			}}
 		>

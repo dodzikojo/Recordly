@@ -623,7 +623,7 @@ export function registerProjectHandlers() {
       timeOffsetMs: normalizeRecordingTimeOffsetMs(session.timeOffsetMs),
       hideOverlayCursorByDefault: normalizeBoolean(session.hideOverlayCursorByDefault),
       webcamBackgroundBlur: normalizeWebcamBackgroundBlurSettings(session.webcamBackgroundBlur),
-      initialCropRegion: Object.prototype.hasOwnProperty.call(session, 'initialCropRegion')
+      initialCropRegion: Object.getOwnPropertyDescriptor(session, 'initialCropRegion') !== undefined
         ? normalizeScreenCropRegion(session.initialCropRegion)
         : existingInitialCropRegion,
     });

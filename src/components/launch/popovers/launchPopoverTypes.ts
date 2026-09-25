@@ -23,6 +23,21 @@ export function isWindowSource(s: DesktopSource): boolean {
 	return s.sourceType === "window" || s.id.startsWith("window:");
 }
 
+export function isSourceSelected(
+	source: DesktopSource,
+	selectedSourceId?: string,
+	selectedSourceName?: string,
+) {
+	return selectedSourceId ? selectedSourceId === source.id : selectedSourceName === source.name;
+}
+
+export function isWindowFramingAvailableForSource(
+	platform: string,
+	source: DesktopSource | null | undefined,
+) {
+	return platform === "win32" && Boolean(source && isWindowSource(source));
+}
+
 export function mapRawSource(s: DesktopSource): DesktopSource {
 	const isWindow = isWindowSource(s);
 	const type = s.sourceType ?? (isWindow ? "window" : "screen");

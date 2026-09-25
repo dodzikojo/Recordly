@@ -1,16 +1,14 @@
 import { useCallback, useState } from "react";
 import type { ProjectLibraryEntry } from "@/components/video-editor/ProjectBrowserDialog";
-import type { DesktopSource } from "../popovers/launchPopoverTypes";
+import { mapRawSource, type DesktopSource } from "../popovers/launchPopoverTypes";
 
 export function useLaunchWindowActions() {
-	const [selectedSource, setSelectedSource] = useState("Screen");
-	const [hasSelectedSource, setHasSelectedSource] = useState(false);
+	const [selectedSource, setSelectedSource] = useState<DesktopSource | null>(null);
 	const [projectLibraryEntries, setProjectLibraryEntries] = useState<ProjectLibraryEntry[]>([]);
 
 	const handleSourceSelect = useCallback(async (source: DesktopSource) => {
 		await window.electronAPI.selectSource(source);
-		setSelectedSource(source.name);
-		setHasSelectedSource(true);
+		setSelectedSource(source);
 		window.electronAPI.showSourceHighlight?.({
 			...source,
 			name: source.appName ? `${source.appName} — ${source.name}` : source.name,
@@ -19,7 +17,9 @@ export function useLaunchWindowActions() {
 	}, []);
 
 	const openVideoFile = useCallback(async () => {
-		const result = await window.electronAPI.openVideoFilePicker({ includeProjects: true });
+		const result = await window.electronAPI.openVideoFilePicker({
+			includeProjects: true,
+		});
 		if (result.canceled) return;
 		if (result.success && result.kind === "project") {
 			await window.electronAPI.switchToEditor();
@@ -52,19 +52,18 @@ export function useLaunchWindowActions() {
 		}
 	}, []);
 
-	const syncSelectedSource = useCallback((source: { name?: string } | null | undefined) => {
+	const syncSelectedSource = useCallback((source: DesktopSource | null | undefined) => {
 		if (source?.name) {
-			setSelectedSource(source.name);
-			setHasSelectedSource(true);
+			setSelectedSource(mapRawSource(source));
 			return;
 		}
-		setSelectedSource("Screen");
-		setHasSelectedSource(false);
+		setSelectedSource(null);
 	}, []);
 
 	return {
 		selectedSource,
-		hasSelectedSource,
+		selectedSourceLabel: selectedSource?.name ?? "Screen",
+		hasSelectedSource: selectedSource !== null,
 		projectLibraryEntries,
 		handleSourceSelect,
 		openVideoFile,

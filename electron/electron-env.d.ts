@@ -29,7 +29,12 @@ interface NativeCaptureDiagnostics {
 	sourceId?: string | null;
 	sourceType?: "screen" | "window" | "unknown";
 	displayId?: number | null;
-	displayBounds?: { x: number; y: number; width: number; height: number } | null;
+	displayBounds?: {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	} | null;
 	windowHandle?: number | null;
 	helperPath?: string | null;
 	outputPath?: string | null;
@@ -210,7 +215,10 @@ interface Window {
 		hudOverlayClose: () => void;
 		hudOverlayRendererReady: () => void;
 		hudOverlaySetWebcamPreviewVisible: (visible: boolean) => void;
-		getHudOverlayCaptureProtection: () => Promise<{ success: boolean; enabled: boolean }>;
+		getHudOverlayCaptureProtection: () => Promise<{
+			success: boolean;
+			enabled: boolean;
+		}>;
 		getHudOverlayMousePassthroughSupported: () => Promise<{
 			success: boolean;
 			supported: boolean;
@@ -219,7 +227,9 @@ interface Window {
 			enabled: boolean,
 		) => Promise<{ success: boolean; enabled: boolean }>;
 		getAssetBasePath: () => Promise<string | null>;
-		getSources: (opts: Electron.SourcesOptions) => Promise<ProcessedDesktopSource[]>;
+		getSources: (
+			opts: Electron.SourcesOptions & { forceRefresh?: boolean },
+		) => Promise<ProcessedDesktopSource[]>;
 		switchToEditor: () => Promise<void>;
 		openSourceSelector: () => Promise<void>;
 		selectSource: (source: ProcessedDesktopSource) => Promise<ProcessedDesktopSource>;
@@ -227,7 +237,27 @@ interface Window {
 		getSelectedSource: () => Promise<ProcessedDesktopSource | null>;
 		getTaskbarCropRegion: (source: ProcessedDesktopSource) => Promise<{
 			success: boolean;
-			cropRegion: { x: number; y: number; width: number; height: number } | null;
+			cropRegion: {
+				x: number;
+				y: number;
+				width: number;
+				height: number;
+			} | null;
+			error?: string;
+		}>;
+		getWindowFramingGeometry: (source: ProcessedDesktopSource) => Promise<{
+			success: boolean;
+			geometry: {
+				frameBounds: { x: number; y: number; width: number; height: number };
+				clientBounds: {
+					x: number;
+					y: number;
+					width: number;
+					height: number;
+				} | null;
+				dpiScale: number;
+				clientDetected: boolean;
+			} | null;
 			error?: string;
 		}>;
 		onSelectedSourceChanged: (
@@ -285,9 +315,12 @@ interface Window {
 			message?: string;
 			error?: string;
 		}>;
-		startFfmpegRecording: (
-			source: ProcessedDesktopSource,
-		) => Promise<{ success: boolean; path?: string; message?: string; error?: string }>;
+		startFfmpegRecording: (source: ProcessedDesktopSource) => Promise<{
+			success: boolean;
+			path?: string;
+			message?: string;
+			error?: string;
+		}>;
 		stopFfmpegRecording: () => Promise<{
 			success: boolean;
 			path?: string;
@@ -332,7 +365,11 @@ interface Window {
 				}>;
 			},
 		) => Promise<{ success: boolean; path?: string; error?: string }>;
-		getRecordedVideoPath: () => Promise<{ success: boolean; path?: string; message?: string }>;
+		getRecordedVideoPath: () => Promise<{
+			success: boolean;
+			path?: string;
+			message?: string;
+		}>;
 		listAssetDirectory: (relativeDir: string) => Promise<{
 			success: boolean;
 			files?: string[];
@@ -404,7 +441,12 @@ interface Window {
 				anchorY: number;
 				aspectRatio: number;
 			}>;
-			zoomTelemetry?: Array<{ timeMs: number; scale: number; x: number; y: number }>;
+			zoomTelemetry?: Array<{
+				timeMs: number;
+				scale: number;
+				x: number;
+				y: number;
+			}>;
 			timelineSegments?: Array<{
 				sourceStartMs: number;
 				sourceEndMs: number;
@@ -423,7 +465,11 @@ interface Window {
 				outputDurationSec?: number;
 				trimSegments?: Array<{ startMs: number; endMs: number }>;
 				editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-				editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+				editedTrackSegments?: Array<{
+					startMs: number;
+					endMs: number;
+					speed: number;
+				}>;
 				editedAudioData?: ArrayBuffer;
 				editedAudioMimeType?: string | null;
 			};
@@ -471,7 +517,11 @@ interface Window {
 				outputDurationSec?: number;
 				trimSegments?: Array<{ startMs: number; endMs: number }>;
 				editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-				editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+				editedTrackSegments?: Array<{
+					startMs: number;
+					endMs: number;
+					speed: number;
+				}>;
 				editedAudioData?: ArrayBuffer;
 				editedAudioMimeType?: string | null;
 			},
@@ -495,7 +545,11 @@ interface Window {
 				outputDurationSec?: number;
 				trimSegments?: Array<{ startMs: number; endMs: number }>;
 				editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-				editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+				editedTrackSegments?: Array<{
+					startMs: number;
+					endMs: number;
+					speed: number;
+				}>;
 				editedAudioData?: ArrayBuffer;
 				editedAudioMimeType?: string | null;
 			},
@@ -515,7 +569,11 @@ interface Window {
 				outputDurationSec?: number;
 				trimSegments?: Array<{ startMs: number; endMs: number }>;
 				editedTrackStrategy?: "filtergraph-fast-path" | "offline-render-fallback";
-				editedTrackSegments?: Array<{ startMs: number; endMs: number; speed: number }>;
+				editedTrackSegments?: Array<{
+					startMs: number;
+					endMs: number;
+					speed: number;
+				}>;
 				editedAudioData?: ArrayBuffer;
 				editedAudioMimeType?: string | null;
 			},
@@ -623,8 +681,14 @@ interface Window {
 			status: string;
 			error?: string;
 		}>;
-		openScreenRecordingPreferences: () => Promise<{ success: boolean; error?: string }>;
-		openAccessibilityPreferences: () => Promise<{ success: boolean; error?: string }>;
+		openScreenRecordingPreferences: () => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
+		openAccessibilityPreferences: () => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
 		saveExportedVideo: (
 			videoData: ArrayBuffer,
 			fileName: string,
@@ -636,7 +700,12 @@ interface Window {
 					text: string;
 				}>;
 			},
-		) => Promise<{ success: boolean; path?: string; message?: string; canceled?: boolean }>;
+		) => Promise<{
+			success: boolean;
+			path?: string;
+			message?: string;
+			canceled?: boolean;
+		}>;
 		writeExportedVideoToPath: (
 			videoData: ArrayBuffer,
 			outputPath: string,
@@ -665,7 +734,11 @@ interface Window {
 			canceled?: boolean;
 			error?: string;
 		}>;
-		openAudioFilePicker: () => Promise<{ success: boolean; path?: string; canceled?: boolean }>;
+		openAudioFilePicker: () => Promise<{
+			success: boolean;
+			path?: string;
+			canceled?: boolean;
+		}>;
 		openWhisperExecutablePicker: () => Promise<{
 			success: boolean;
 			path?: string;
@@ -690,7 +763,10 @@ interface Window {
 			alreadyDownloaded?: boolean;
 			error?: string;
 		}>;
-		deleteWhisperSmallModel: () => Promise<{ success: boolean; error?: string }>;
+		deleteWhisperSmallModel: () => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
 		onWhisperSmallModelDownloadProgress: (
 			callback: (state: {
 				status: "idle" | "downloading" | "downloaded" | "error";
@@ -724,7 +800,12 @@ interface Window {
 				timeOffsetMs?: number;
 				hideOverlayCursorByDefault?: boolean;
 				webcamBackgroundBlur?: { enabled: boolean; amount: number };
-				initialCropRegion?: { x: number; y: number; width: number; height: number } | null;
+				initialCropRegion?: {
+					x: number;
+					y: number;
+					width: number;
+					height: number;
+				} | null;
 			},
 			options?: { preserveProjectPath?: boolean },
 		) => Promise<{ success: boolean }>;
@@ -736,7 +817,12 @@ interface Window {
 				timeOffsetMs?: number;
 				hideOverlayCursorByDefault?: boolean;
 				webcamBackgroundBlur?: { enabled: boolean; amount: number };
-				initialCropRegion?: { x: number; y: number; width: number; height: number } | null;
+				initialCropRegion?: {
+					x: number;
+					y: number;
+					width: number;
+					height: number;
+				} | null;
 			};
 		}>;
 		getCurrentVideoPath: () => Promise<{ success: boolean; path?: string }>;
@@ -852,7 +938,11 @@ interface Window {
 		revealInFolder: (
 			filePath: string,
 		) => Promise<{ success: boolean; error?: string; message?: string }>;
-		openRecordingsFolder: () => Promise<{ success: boolean; error?: string; message?: string }>;
+		openRecordingsFolder: () => Promise<{
+			success: boolean;
+			error?: string;
+			message?: string;
+		}>;
 		getRecordingsDirectory: () => Promise<{
 			success: boolean;
 			path: string;
@@ -891,6 +981,7 @@ interface Window {
 			microphoneDeviceId?: string;
 			systemAudioEnabled: boolean;
 			excludeTaskbar: boolean;
+			windowFraming: { enabled: boolean; topInsetDip: number };
 			webcamBackgroundBlur: { enabled: boolean; amount: number };
 		}>;
 		getRecordingAudioLabConfig: () => Promise<{
@@ -902,6 +993,7 @@ interface Window {
 			microphoneDeviceId?: string;
 			systemAudioEnabled?: boolean;
 			excludeTaskbar?: boolean;
+			windowFraming?: { enabled: boolean; topInsetDip: number };
 			webcamBackgroundBlur?: { enabled: boolean; amount: number };
 		}) => Promise<{ success: boolean; error?: string }>;
 		/** Countdown timer before recording */
@@ -909,7 +1001,10 @@ interface Window {
 		setCountdownDelay: (delay: number) => Promise<{ success: boolean; error?: string }>;
 		startCountdown: (seconds: number) => Promise<{ success: boolean; cancelled?: boolean }>;
 		cancelCountdown: () => Promise<{ success: boolean }>;
-		getActiveCountdown: () => Promise<{ success: boolean; seconds: number | null }>;
+		getActiveCountdown: () => Promise<{
+			success: boolean;
+			seconds: number | null;
+		}>;
 		onCountdownTick: (callback: (seconds: number) => void) => () => void;
 		extensionsDiscover: () => Promise<RendererExtensionInfo[]>;
 		extensionsList: () => Promise<RendererExtensionInfo[]>;
@@ -924,8 +1019,16 @@ interface Window {
 			canceled?: boolean;
 		}>;
 		extensionsUninstall: (id: string) => Promise<{ success: boolean; error?: string }>;
-		extensionsGetDirectory: () => Promise<{ success: boolean; path?: string; error?: string }>;
-		extensionsOpenDirectory: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		extensionsGetDirectory: () => Promise<{
+			success: boolean;
+			path?: string;
+			error?: string;
+		}>;
+		extensionsOpenDirectory: () => Promise<{
+			success: boolean;
+			path?: string;
+			error?: string;
+		}>;
 		extensionsMarketplaceSearch: (params: {
 			query?: string;
 			tags?: string[];
@@ -945,7 +1048,11 @@ interface Window {
 			status?: RendererMarketplaceReviewStatus;
 			page?: number;
 			pageSize?: number;
-		}) => Promise<{ reviews: RendererExtensionReview[]; total: number; error?: string }>;
+		}) => Promise<{
+			reviews: RendererExtensionReview[];
+			total: number;
+			error?: string;
+		}>;
 		extensionsReviewUpdate: (
 			reviewId: string,
 			status: RendererMarketplaceReviewStatus,
