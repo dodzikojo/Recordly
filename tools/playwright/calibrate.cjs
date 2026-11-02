@@ -1,0 +1,136 @@
+"use strict";
+
+/**
+ * Records a calibration take: a browser window with five buttons (four corners and the centre)
+ * is clicked in turn while Recordly records it with the agent cursor. Play the result back: the
+ * drawn cursor should land on each button. If it is consistently off, pass --offset-x/--offset-y
+ * (screen DIP, added to every mapped point) and record again.
+ *
+ *   node calibrate.cjs [--offset-x <n>] [--offset-y <n>] [--headless]
+ */
+
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const { chromium } = require("playwright");
+const { connect, glideClick, sizeWindowForViewport } = require("./recordly-playwright.cjs");
+
+const VIEWPORT = { width: 1440, height: 900 };
+const BUTTONS = ["#top-left", "#top-right", "#bottom-right", "#bottom-left", "#center"];
+
+function parseArgs(argv) {
+	const options = { offsetX: 0, offsetY: 0, headless: false };
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === "--offset-x" || arg === "--offset-y") {
+			const value = Number(argv[++i]);
+			if (!Number.isFinite(value)) {
+				throw new Error(`${arg} needs a number`);
+			}
+			options[arg === "--offset-x" ? "offsetX" : "offsetY"] = value;
+		} else if (arg === "--headless") {
+			// For dry runs against a fake server; Recordly can't capture a headless window.
+			options.headless = true;
+		} else {
+			throw new Error(`Unknown argument: ${arg}`);
+		}
+	}
+	return options;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function openCalibrationPage(context, url) {
+	// With --app the window opens by itself; fall back to navigating a blank page if it doesn't.
+	const isCalibration = (page) => page.url().startsWith(url);
+	let page = context.pages().find(isCalibration);
+	if (!page) {
+		page = await context
+			.waitForEvent("page", { predicate: isCalibration, timeout: 5000 })
+			.catch(() => undefined);
+	}
+	if (!page) {
+		page = context.pages()[0] || (await context.newPage());
+		await page.goto(url);
+	}
+	await page.bringToFront();
+	return page;
+}
+
+async function main() {
+	const options = parseArgs(process.argv.slice(2));
+
+	// Fail fast, before any browser window opens, if Recordly isn't there.
+	const recordly = await connect();
+
+	const url = pathToFileURL(path.join(__dirname, "calibration.html")).href;
+	const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "recordly-calibration-"));
+	const context = await chromium.launchPersistentContext(userDataDir, {
+		channel: "chrome",
+		headless: options.headless,
+		viewport: null,
+		args: [`--app=${url}`],
+	});
+
+	let started = false;
+	let cursor;
+	let failure;
+	try {
+		const page = await openCalibrationPage(context, url);
+		await sizeWindowForViewport(page, VIEWPORT);
+
+		await recordly.start({
+			source: { windowTitle: "Recordly calibration" },
+			agentCursor: true,
+		});
+		started = true;
+		cursor = await recordly.attachCursor(page, {
+			offsetX: options.offsetX,
+			offsetY: options.offsetY,
+		});
+
+		await sleep(1000);
+		for (const selector of BUTTONS) {
+			await glideClick(page, page.locator(selector));
+			await sleep(1000);
+		}
+	} catch (error) {
+		failure = error;
+	}
+
+	try {
+		if (cursor) {
+			await cursor.detach();
+		}
+	} catch (error) {
+		console.warn(`Warning: the final cursor flush failed: ${error.message}`);
+	}
+
+	// Always stop an open take so the footage is kept, even when something above failed.
+	if (started) {
+		try {
+			const result = await recordly.stop();
+			console.log(`videoPath: ${result.videoPath}`);
+			console.log(`projectPath: ${result.projectPath}`);
+			if (result.saveError) {
+				console.warn(`saveError: ${result.saveError}`);
+			}
+		} catch (error) {
+			failure = failure || error;
+			console.error(`Stopping the take failed: ${error.message}`);
+		}
+	}
+
+	await context.close().catch(() => undefined);
+	fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3 });
+
+	if (failure) {
+		throw failure;
+	}
+}
+
+main().catch((error) => {
+	console.error(error.message || error);
+	process.exitCode = 1;
+});

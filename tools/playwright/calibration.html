@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Recordly calibration</title>
+		<style>
+			html,
+			body {
+				margin: 0;
+				width: 100%;
+				height: 100%;
+				overflow: hidden;
+				background: #14161a;
+				font-family: system-ui, sans-serif;
+				color: #e8eaed;
+			}
+			button {
+				position: absolute;
+				width: 220px;
+				height: 80px;
+				border: 2px solid #5b6270;
+				border-radius: 10px;
+				background: #262a31;
+				color: inherit;
+				font-size: 18px;
+				cursor: pointer;
+			}
+			button.hit {
+				background: #1f8f4e;
+				border-color: #34d27b;
+			}
+			#top-left {
+				left: 40px;
+				top: 40px;
+			}
+			#top-right {
+				right: 40px;
+				top: 40px;
+			}
+			#bottom-left {
+				left: 40px;
+				bottom: 40px;
+			}
+			#bottom-right {
+				right: 40px;
+				bottom: 40px;
+			}
+			#center {
+				left: calc(50% - 110px);
+				top: calc(50% - 40px);
+			}
+		</style>
+	</head>
+	<body>
+		<button id="top-left" data-label="Top left">Top left (0)</button>
+		<button id="top-right" data-label="Top right">Top right (0)</button>
+		<button id="center" data-label="Center">Center (0)</button>
+		<button id="bottom-left" data-label="Bottom left">Bottom left (0)</button>
+		<button id="bottom-right" data-label="Bottom right">Bottom right (0)</button>
+		<script>
+			for (const button of document.querySelectorAll("button")) {
+				let clicks = 0;
+				button.addEventListener("click", () => {
+					clicks += 1;
+					button.classList.add("hit");
+					button.textContent = `${button.dataset.label} (${clicks})`;
+				});
+			}
+		</script>
+	</body>
+</html>
