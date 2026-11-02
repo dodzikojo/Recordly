@@ -17,6 +17,8 @@ import {
 	webContents as electronWebContents,
 } from "electron";
 import { RECORDINGS_DIR } from "./appPaths";
+import { resolveControlConfig } from "./control/config";
+import { createMcpRequestHandler } from "./control/mcpServer";
 import { showCursor } from "./cursorHider";
 import { registerExtensionIpcHandlers } from "./extensions/extensionIpc";
 import { getGpuSwitches } from "./gpuSwitches";
@@ -920,6 +922,15 @@ app.on("second-instance", () => {
 
 // Register all IPC handlers when app is ready
 app.whenReady().then(async () => {
+	// Placeholder until the control server is wired up: inert unless control is enabled. The static
+	// import above keeps the MCP SDK in the main bundle so the CJS build and smoke check cover it.
+	if (resolveControlConfig(process.env, process.argv).enabled) {
+		console.info(
+			"[control] MCP handler factory bundled:",
+			typeof createMcpRequestHandler === "function",
+		);
+	}
+
 	if (process.platform === "win32") {
 		app.setAppUserModelId("dev.recordly.app");
 	}
