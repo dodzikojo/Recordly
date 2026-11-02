@@ -192,6 +192,22 @@ Module and file names in Recordly; the exact HTTP routes and MCP tool names; the
 the renderer reports start/stop failures back to main; batching interval for cursor events; glide timing defaults;
 ORCA selectors for each shot (from `capture-proposals.cjs` and the running app).
 
+## Rejected alternatives (and why)
+
+- **"Playwright aims, the real mouse clicks"** (move and click the OS mouse with a small SendInput helper, so Recordly
+  needs no changes): offered on Nov 2 as the lowest-risk path before the freeze. The owner chose to build the full
+  feature today instead, because markers and local control are wanted beyond this video (ClashWise demos next) and a
+  real-click take needs hands off the mouse and an unobscured window.
+- **An agent (Claude via the Playwright MCP) clicking live during takes:** rejected for takes because agent pacing
+  leaves 5–20 s gaps; agents use the MCP for control, a script does the choreography.
+- **Playwright's own video recording / CDP screencast** (what `capture-proposals.cjs` uses): no drawn-cursor effects
+  or click zooms, and Playwright's recorder starved the page of CPU under SwiftShader in ORCA's earlier captures.
+- **Discarding or refusing on retake:** discarding loses each take's fresh auto-zooms (they're only applied to a fresh
+  session); refusing makes every scripted retake need a person. The owner chose auto-save.
+- **Copying the helper into ORCA:** would put AGPL code in an MIT hackathon repo; ORCA loads it from Recordly instead.
+- **The take script launching Recordly itself:** offered (~15–20 min more); the owner chose to start Recordly once by
+  hand, keeping one less moving part on the recording day.
+
 ## Owner decisions
 
 - Build all of it today: MCP server, click markers, Playwright helper, ORCA take script.

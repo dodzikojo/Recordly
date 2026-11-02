@@ -10,6 +10,21 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-02-local-mcp-recording-design.md` (read it first; this plan argues from it).
 
+## Execution status (handoff, 2026-11-02)
+
+- **Method (owner's choice):** superpowers:subagent-driven-development, end to end (Tasks 1–8), in a fresh session.
+- **Status:** no task started. Spec and plan committed on `feature/local-mcp-recording` (`4644add4`, `563bf3bc`, plus
+  the handoff commit).
+- **Deadline:** ORCA's footage is recorded at its Nov 3, 2026 freeze; submission Nov 4, 2026 before noon ET. Tasks 1–7
+  must be done and smoked on Nov 2 so Task 8's takes can run.
+- **Environment facts already checked (don't re-discover):** Electron (`node_modules/electron/dist/electron.exe`) and
+  `ffmpeg-static` are present; `uiohook-napi` has a `prebuilds/win32-x64` binary (no `build/Release`); native helpers
+  are tracked under `electron/native/bin/win32-x64`. Google Chrome and Edge are installed. Playwright is **not**
+  installed anywhere (no global package, not in ORCA `web/node_modules`); Task 6 installs it under `tools/playwright`.
+  Local Node is v24 (CI uses 22). Dev-mode `userData` is `%APPDATA%\Recordly-dev` (`electron/appPaths.ts`).
+- **Open item for the owner:** the live ORCA URL for `--url` (the script defaults to `http://localhost:8765`).
+- **ORCA access:** the session must have `C:\Users\dodzi\source\repos\ORCA` as an extra working directory for Task 8.
+
 ## Global Constraints
 
 - The control server is **off by default**; on only when Recordly starts with `RECORDLY_CONTROL=1` or the `--control` argument.
