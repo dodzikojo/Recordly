@@ -23,6 +23,7 @@ import {
 	activeCursorSamples,
 	agentCursorTakeActive,
 	lastAgentCursorEventAtMs,
+	nativeCaptureStartedAtMs,
 	setActiveCursorSamples,
 	setAgentCursorTakeActive,
 	setCursorCaptureStartTimeMs,
@@ -33,10 +34,15 @@ import {
 } from "../state";
 import {
 	AgentCursorInactiveError,
+	clearNativeCaptureStart,
 	computeAgentCursorTimeLeadMs,
 	ingestAgentCursorEvents,
 	MAX_AGENT_CURSOR_BATCH,
 	mapCssCursorToVisualType,
+	markNativeCapturePaused,
+	markNativeCaptureResumed,
+	markNativeCaptureStarted,
+	resolveCursorClockStartMs,
 } from "./agentCursor";
 import {
 	pauseCursorCapture,
@@ -225,6 +231,82 @@ describe("ingestAgentCursorEvents", () => {
 		expect(result.accepted).toBe(0);
 		expect(result.rejected).toHaveLength(MAX_AGENT_CURSOR_BATCH + 1);
 		expect(activeCursorSamples).toHaveLength(0);
+	});
+});
+
+describe("native capture start clock", () => {
+	beforeEach(() => {
+		clearNativeCaptureStart();
+		setIsCursorCaptureActive(false);
+	});
+
+	it("keeps the start stamp when capture never paused", () => {
+		markNativeCaptureStarted(10_000);
+		expect(nativeCaptureStartedAtMs).toBe(10_000);
+		expect(resolveCursorClockStartMs(10_900, true)).toBe(10_000);
+	});
+
+	it("shifts the start by a pre-take pause (the countdown), which the helper drops from the video", () => {
+		markNativeCaptureStarted(10_000);
+		markNativeCapturePaused(10_050);
+		markNativeCaptureResumed(13_050);
+		expect(nativeCaptureStartedAtMs).toBe(13_000);
+		// The take starts 0.9 s after the effective start: lead 900, clock backdated to it.
+		expect(computeAgentCursorTimeLeadMs(13_900, nativeCaptureStartedAtMs)).toBe(900);
+		expect(resolveCursorClockStartMs(13_900, true)).toBe(13_000);
+	});
+
+	it("ignores a resume without a tracked pause", () => {
+		markNativeCaptureStarted(10_000);
+		markNativeCaptureResumed(12_000);
+		expect(nativeCaptureStartedAtMs).toBe(10_000);
+	});
+
+	it("leaves pauses during the take to the cursor clock's own accounting", () => {
+		markNativeCaptureStarted(10_000);
+		setIsCursorCaptureActive(true);
+		markNativeCapturePaused(12_000);
+		markNativeCaptureResumed(14_000);
+		expect(nativeCaptureStartedAtMs).toBe(10_000);
+	});
+
+	it("tracks nothing without a start stamp, and a new start drops a pause left open", () => {
+		markNativeCapturePaused(10_000);
+		markNativeCaptureResumed(11_000);
+		expect(nativeCaptureStartedAtMs).toBeNull();
+
+		markNativeCaptureStarted(20_000);
+		markNativeCapturePaused(20_050);
+		markNativeCaptureStarted(30_000);
+		markNativeCaptureResumed(31_000);
+		expect(nativeCaptureStartedAtMs).toBe(30_000);
+	});
+
+	it("counts a pause still open when the take starts up to that moment", () => {
+		markNativeCaptureStarted(10_000);
+		markNativeCapturePaused(10_050);
+		// 50 ms of video were captured before the pause.
+		expect(resolveCursorClockStartMs(13_950, true)).toBe(13_900);
+	});
+
+	it("keeps human takes on the wall clock", () => {
+		markNativeCaptureStarted(10_000);
+		markNativeCapturePaused(10_050);
+		markNativeCaptureResumed(13_050);
+		expect(resolveCursorClockStartMs(13_900, false)).toBe(13_900);
+	});
+
+	it("falls back to the wall clock with no stamp, a stale stamp, or after clearing", () => {
+		expect(resolveCursorClockStartMs(10_900, true)).toBe(10_900);
+
+		markNativeCaptureStarted(10_000);
+		expect(resolveCursorClockStartMs(25_000, true)).toBe(25_000);
+
+		markNativeCapturePaused(10_050);
+		clearNativeCaptureStart();
+		expect(nativeCaptureStartedAtMs).toBeNull();
+		markNativeCaptureResumed(13_050);
+		expect(resolveCursorClockStartMs(13_900, true)).toBe(13_900);
 	});
 });
 

@@ -91,8 +91,11 @@ export let windowBoundsCaptureInterval: NodeJS.Timeout | null = null;
 export let agentCursorTakeActive = false;
 export let lastAgentCursorEventAtMs: number | null = null;
 // Wall-clock time the native capture helper reported it had started (video t=0). Recorded for
-// every take but only consulted for agent-driven takes.
+// every take but only consulted for agent-driven takes. Shifted forward by pre-take pauses (the
+// HUD's countdown warm start), which the helpers drop from the video.
 export let nativeCaptureStartedAtMs: number | null = null;
+// Wall-clock start of an open pre-take pause of native capture, else null.
+export let nativeCapturePreTakePauseStartedAtMs: number | null = null;
 
 // ── Native macOS window source cache ─────────────────────────────────────────
 export let cachedNativeMacWindowSources: import("./types").NativeMacWindowSource[] | null = null;
@@ -286,6 +289,9 @@ export function setLastAgentCursorEventAtMs(v: number | null) {
 }
 export function setNativeCaptureStartedAtMs(v: number | null) {
 	nativeCaptureStartedAtMs = v;
+}
+export function setNativeCapturePreTakePauseStartedAtMs(v: number | null) {
+	nativeCapturePreTakePauseStartedAtMs = v;
 }
 
 export function setCachedNativeMacWindowSources(

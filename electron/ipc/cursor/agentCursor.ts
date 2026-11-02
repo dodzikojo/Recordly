@@ -2,7 +2,11 @@ import {
 	agentCursorTakeActive,
 	isCursorCaptureActive,
 	lastAgentCursorEventAtMs,
+	nativeCapturePreTakePauseStartedAtMs,
+	nativeCaptureStartedAtMs,
 	setLastAgentCursorEventAtMs,
+	setNativeCapturePreTakePauseStartedAtMs,
+	setNativeCaptureStartedAtMs,
 } from "../state";
 import type { CursorVisualType } from "../types";
 import { recordCursorDownAt, recordCursorUpAt } from "./interaction";
@@ -57,6 +61,66 @@ export function computeAgentCursorTimeLeadMs(
 		return 0;
 	}
 	return lead;
+}
+
+// ── Native capture start clock ──────────────────────────────────────────────────────────────
+// Tracks the video's t=0 on the wall clock. With a countdown the HUD warm-starts native capture,
+// pauses it through the countdown and resumes it; the helpers drop paused spans from the video,
+// so a pre-take pause moves t=0 forward by its length. Pauses once the take's cursor clock runs
+// are left to the cursor clock's own pause accounting. Human takes never read the stamp.
+
+/** Forgets the stamp: a native start attempt begins, or the take ended. */
+export function clearNativeCaptureStart(): void {
+	setNativeCaptureStartedAtMs(null);
+	setNativeCapturePreTakePauseStartedAtMs(null);
+}
+
+/** The native helper confirmed capture start (video t=0) at `atMs`. */
+export function markNativeCaptureStarted(atMs: number): void {
+	setNativeCaptureStartedAtMs(atMs);
+	setNativeCapturePreTakePauseStartedAtMs(null);
+}
+
+/** Native capture paused at `atMs`; tracked only before the take's cursor clock starts. */
+export function markNativeCapturePaused(atMs: number): void {
+	if (
+		isCursorCaptureActive ||
+		nativeCaptureStartedAtMs === null ||
+		nativeCapturePreTakePauseStartedAtMs !== null
+	) {
+		return;
+	}
+	setNativeCapturePreTakePauseStartedAtMs(atMs);
+}
+
+/** Native capture resumed at `atMs`: a tracked pre-take pause moves the stamp forward by its span. */
+export function markNativeCaptureResumed(atMs: number): void {
+	const pausedAtMs = nativeCapturePreTakePauseStartedAtMs;
+	if (pausedAtMs === null) {
+		return;
+	}
+	setNativeCapturePreTakePauseStartedAtMs(null);
+	const pausedSpanMs = atMs - pausedAtMs;
+	if (nativeCaptureStartedAtMs !== null && Number.isFinite(pausedSpanMs) && pausedSpanMs > 0) {
+		setNativeCaptureStartedAtMs(nativeCaptureStartedAtMs + pausedSpanMs);
+	}
+}
+
+/**
+ * Where the cursor clock of a take starting at `nowMs` begins. Agent takes backdate it to the
+ * video's t=0 (a pre-take pause still open counts up to `nowMs`); human takes use `nowMs`.
+ */
+export function resolveCursorClockStartMs(nowMs: number, agentTake: boolean): number {
+	if (!agentTake) {
+		return nowMs;
+	}
+	const openPauseMs =
+		nativeCapturePreTakePauseStartedAtMs === null
+			? 0
+			: Math.max(0, nowMs - nativeCapturePreTakePauseStartedAtMs);
+	const effectiveStartMs =
+		nativeCaptureStartedAtMs === null ? null : nativeCaptureStartedAtMs + openPauseMs;
+	return nowMs - computeAgentCursorTimeLeadMs(nowMs, effectiveStartMs);
 }
 
 const CSS_CURSOR_TO_VISUAL_TYPE = new Map<string, CursorVisualType>([
