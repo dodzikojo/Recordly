@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { RecordingControlReply, RecordingControlRequest } from "./control/controlEvents";
 import type { RecordingSessionData } from "./ipc/types";
 
 type NativeVideoExportWriteResult = { success: boolean; error?: string };
@@ -621,6 +622,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		const listener = () => callback();
 		ipcRenderer.on("stop-recording-from-tray", listener);
 		return () => ipcRenderer.removeListener("stop-recording-from-tray", listener);
+	},
+	onRecordingControl: (callback: (request: RecordingControlRequest) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, request: RecordingControlRequest) =>
+			callback(request);
+		ipcRenderer.on("recording-control", listener);
+		// A freshly created HUD is still loading; main waits for this before sending requests.
+		ipcRenderer.send("recording-control-ready");
+		return () => ipcRenderer.removeListener("recording-control", listener);
+	},
+	replyRecordingControl: (reply: RecordingControlReply) => {
+		ipcRenderer.send("recording-control-reply", reply);
 	},
 	onRecordingStateChanged: (
 		callback: (state: { recording: boolean; sourceName: string }) => void,

@@ -12,6 +12,7 @@ import {
 	shell,
 	systemPreferences,
 } from "electron";
+import { controlEvents } from "../../control/controlEvents";
 import { showCursor } from "../../cursorHider";
 import { getMonitorHandles } from "../monitorResolver";
 import { ALLOW_RECORDLY_WINDOW_CAPTURE } from "../constants";
@@ -1874,6 +1875,13 @@ export function registerRecordingHandlers(
 
 		if (onRecordingStateChange) {
 			onRecordingStateChange(recording, source.name);
+		}
+
+		// The local control server tracks every take (human or controlled) from here.
+		try {
+			controlEvents.emit("recording-state", Boolean(recording));
+		} catch (error) {
+			console.warn("[control] recording-state listener failed:", error);
 		}
 	});
 

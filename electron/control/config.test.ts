@@ -6,6 +6,7 @@ import {
 	CONTROL_DISCOVERY_FILE,
 	DEFAULT_CONTROL_PORT,
 	removeDiscoveryFile,
+	removeDiscoveryFileSync,
 	resolveControlConfig,
 	writeDiscoveryFile,
 } from "./config";
@@ -67,6 +68,13 @@ describe("discovery file", () => {
 		await removeDiscoveryFile(dir);
 		await expect(fs.access(file)).rejects.toThrow();
 		await expect(removeDiscoveryFile(dir)).resolves.toBeUndefined();
+	});
+
+	it("removes the file synchronously (for quit) and tolerates a missing one", async () => {
+		const file = await writeDiscoveryFile(dir, { port: 1, token: "t", pid: 2 });
+		removeDiscoveryFileSync(dir);
+		await expect(fs.access(file)).rejects.toThrow();
+		expect(() => removeDiscoveryFileSync(dir)).not.toThrow();
 	});
 
 	it.skipIf(process.platform === "win32")(

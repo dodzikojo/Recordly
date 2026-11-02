@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { rmSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -52,4 +53,9 @@ export async function writeDiscoveryFile(
 
 export async function removeDiscoveryFile(dir: string): Promise<void> {
 	await fs.rm(path.join(dir, CONTROL_DISCOVERY_FILE), { force: true });
+}
+
+/** For quit handlers: an async delete is not guaranteed to finish before the process exits. */
+export function removeDiscoveryFileSync(dir: string): void {
+	rmSync(path.join(dir, CONTROL_DISCOVERY_FILE), { force: true });
 }

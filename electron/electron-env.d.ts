@@ -77,6 +77,8 @@ type RendererMarketplaceReviewStatus =
 type RendererMarketplaceSearchResult =
 	import("./extensions/extensionTypes").MarketplaceSearchResult;
 type RendererRecordingSessionData = import("./ipc/types").RecordingSessionData;
+type RendererRecordingControlRequest = import("./control/controlEvents").RecordingControlRequest;
+type RendererRecordingControlReply = import("./control/controlEvents").RecordingControlReply;
 
 interface RendererFfmpegAudioMuxMetrics {
 	tempVideoWriteMs?: number;
@@ -651,6 +653,11 @@ interface Window {
 			error?: string;
 		}>;
 		onStopRecordingFromTray: (callback: () => void) => () => void;
+		/** Local control server → HUD recorder; subscribing tells main the HUD is ready. */
+		onRecordingControl: (
+			callback: (request: RendererRecordingControlRequest) => void,
+		) => () => void;
+		replyRecordingControl: (reply: RendererRecordingControlReply) => void;
 		onRecordingStateChanged: (
 			callback: (state: { recording: boolean; sourceName: string }) => void,
 		) => () => void;
