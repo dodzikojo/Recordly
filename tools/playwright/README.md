@@ -44,9 +44,13 @@ const { videoPath, projectPath } = await recordly.stop();
 If your script fails after `start`, call `detach()` then `stop()` so the footage is kept; a take
 left running makes the next `start` fail with `conflict`.
 
-`connect()` finds `control-server.json` via `RECORDLY_CONTROL_FILE`, then `%APPDATA%\Recordly-dev`,
-then `%APPDATA%\Recordly`, skipping files whose process is gone. It fails immediately with
-"Recordly's control server isn't running; start Recordly with RECORDLY_CONTROL=1" when none is live.
+`connect()` finds `control-server.json` via `RECORDLY_CONTROL_FILE`, then the `Recordly-dev` and
+`Recordly` userData folders (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS,
+`$XDG_CONFIG_HOME` or `~/.config` on Linux), skipping files whose process is gone. It fails
+immediately with "Recordly's control server isn't running; start Recordly with RECORDLY_CONTROL=1"
+when none is live, and after `timeoutMs` (default 5 s, also used by `status()`/`sources()`) with
+"Recordly's control server isn't responding …" when the server doesn't answer. `start`, `stop`,
+`pause`, `resume` and `cancel` have no timeout (`stop` waits for the editor to save).
 
 ## Troubleshooting offsets
 

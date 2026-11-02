@@ -17,11 +17,17 @@
 
 const fs = require("node:fs");
 const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 
 const DISCOVERY_FILE = "control-server.json";
 const NOT_RUNNING_MESSAGE =
 	"Recordly's control server isn't running; start Recordly with RECORDLY_CONTROL=1";
+const NOT_RESPONDING_MESSAGE =
+	"Recordly's control server isn't responding (it may be busy or showing a dialog); check the Recordly window";
+// For quick calls only (connect's ping, status, sources): start/stop/cancel/pause/resume wait on
+// the recorder and editor and can legitimately take minutes.
+const QUICK_REQUEST_TIMEOUT_MS = 5000;
 const MAX_BATCH = 1000;
 
 // --- Discovery ---------------------------------------------------------------------------------
@@ -50,13 +56,41 @@ function isControlInfo(info) {
 }
 
 /**
- * Finds a live discovery file: RECORDLY_CONTROL_FILE, then %APPDATA%\Recordly-dev, then
- * %APPDATA%\Recordly. Files that are unreadable or whose pid is dead (a crashed Recordly) are
- * skipped. Throws NOT_RUNNING_MESSAGE when none is live.
+ * Electron's appData directory, which holds Recordly's userData folders: %APPDATA% on Windows,
+ * ~/Library/Application Support on macOS, $XDG_CONFIG_HOME or ~/.config on Linux.
+ */
+function defaultAppDataDir(env, platform, homeDir) {
+	if (platform === "win32") {
+		return env.APPDATA;
+	}
+	if (platform === "darwin") {
+		return homeDir ? path.join(homeDir, "Library", "Application Support") : undefined;
+	}
+	if (env.XDG_CONFIG_HOME) {
+		return env.XDG_CONFIG_HOME;
+	}
+	return homeDir ? path.join(homeDir, ".config") : undefined;
+}
+
+function defaultHomeDir() {
+	try {
+		return os.homedir();
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Finds a live discovery file: RECORDLY_CONTROL_FILE, then <appData>/Recordly-dev (dev builds),
+ * then <appData>/Recordly (packaged), where <appData> is Electron's appData directory for the
+ * platform (pass `appData` to override). Files that are unreadable or whose pid is dead (a crashed
+ * Recordly) are skipped. Throws NOT_RUNNING_MESSAGE when none is live.
  */
 function resolveControlFile({
 	env = process.env,
-	appData = process.env.APPDATA,
+	platform = process.platform,
+	homeDir = defaultHomeDir(),
+	appData = defaultAppDataDir(env, platform, homeDir),
 	exists = fs.existsSync,
 	readJson = defaultReadJson,
 	isPidAlive = defaultIsPidAlive,
@@ -93,12 +127,30 @@ function isConnectionFailure(error) {
 }
 
 /**
- * One JSON request over node:http. There is deliberately no timeout: `stop` waits for the editor
- * to settle and save, which can take minutes. (Node's global fetch would give up after 5 minutes
- * and sends no Origin header either way; node:http sends none, which the server requires.)
+ * One JSON request over node:http. `timeoutMs` (optional) bounds the whole request, from connect
+ * to the end of the response, and rejects with NOT_RESPONDING_MESSAGE. Leave it unset for calls
+ * that may legitimately take long: `stop` waits for the editor to settle and save, which can take
+ * minutes. (Node's global fetch would give up after 5 minutes; node:http sends no Origin header,
+ * which the server requires.)
  */
-function httpJson(control, method, urlPath, body) {
-	return new Promise((resolve, reject) => {
+function httpJson(control, method, urlPath, body, { timeoutMs } = {}) {
+	return new Promise((resolvePromise, rejectPromise) => {
+		let timer = null;
+		const clearTimer = () => {
+			if (timer) {
+				clearTimeout(timer);
+				timer = null;
+			}
+		};
+		const resolve = (value) => {
+			clearTimer();
+			resolvePromise(value);
+		};
+		const reject = (error) => {
+			clearTimer();
+			rejectPromise(error);
+		};
+
 		const payload = body === undefined ? undefined : JSON.stringify(body);
 		const headers = { Authorization: `Bearer ${control.token}`, Accept: "application/json" };
 		if (payload !== undefined) {
@@ -131,6 +183,15 @@ function httpJson(control, method, urlPath, body) {
 			},
 		);
 		req.on("error", reject);
+		if (isFiniteNumber(timeoutMs) && timeoutMs > 0) {
+			timer = setTimeout(() => {
+				const error = new Error(NOT_RESPONDING_MESSAGE);
+				error.code = "RECORDLY_NOT_RESPONDING";
+				// Destroying the request also aborts a half-read response; reject settles first.
+				reject(error);
+				req.destroy(error);
+			}, timeoutMs);
+		}
 		if (payload !== undefined) {
 			req.write(payload);
 		}
@@ -474,11 +535,11 @@ async function glideClick(page, locator, { durationMs = 600, pauseMs = 120 } = {
 
 // --- Client ------------------------------------------------------------------------------------
 
-function createClient(control) {
-	async function request(method, urlPath, body) {
+function createClient(control, { quickTimeoutMs = QUICK_REQUEST_TIMEOUT_MS } = {}) {
+	async function request(method, urlPath, body, options) {
 		let response;
 		try {
-			response = await httpJson(control, method, urlPath, body);
+			response = await httpJson(control, method, urlPath, body, options);
 		} catch (error) {
 			if (isConnectionFailure(error)) {
 				throw new Error(NOT_RUNNING_MESSAGE);
@@ -491,9 +552,11 @@ function createClient(control) {
 		return response.json;
 	}
 
+	const quick = { timeoutMs: quickTimeoutMs };
 	const client = {
-		status: () => request("GET", "/v1/status"),
-		sources: async () => (await request("GET", "/v1/sources")).sources,
+		status: () => request("GET", "/v1/status", undefined, quick),
+		sources: async () => (await request("GET", "/v1/sources", undefined, quick)).sources,
+		// No timeout: these wait on the recorder (and stop on the editor saving the project).
 		start: (options) => request("POST", "/v1/recording/start", options),
 		pause: () => request("POST", "/v1/recording/pause"),
 		resume: () => request("POST", "/v1/recording/resume"),
@@ -507,18 +570,25 @@ function createClient(control) {
 
 /**
  * Connects to the running Recordly control server. Fails fast (never hangs) with
- * NOT_RUNNING_MESSAGE when the discovery file is missing/stale or the port refuses connections.
- * Pass `control: { port, token }` to skip discovery.
+ * NOT_RUNNING_MESSAGE when the discovery file is missing/stale or the port refuses connections,
+ * and with NOT_RESPONDING_MESSAGE when the server doesn't answer within `timeoutMs` (default 5 s;
+ * also used by status() and sources()). Pass `control: { port, token }` to skip discovery.
  */
 async function connect(options = {}) {
 	const control = options.control || resolveControlFile(options).info;
-	const client = createClient({ port: control.port, token: control.token });
+	const client = createClient(
+		{ port: control.port, token: control.token },
+		isFiniteNumber(options.timeoutMs) && options.timeoutMs > 0
+			? { quickTimeoutMs: options.timeoutMs }
+			: {},
+	);
 	await client.status();
 	return client;
 }
 
 module.exports = {
 	NOT_RUNNING_MESSAGE,
+	NOT_RESPONDING_MESSAGE,
 	resolveControlFile,
 	connect,
 	glideClick,

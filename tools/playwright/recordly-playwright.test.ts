@@ -29,6 +29,7 @@ interface CursorHandle {
 
 interface Client {
 	status(): Promise<unknown>;
+	sources(): Promise<unknown>;
 	start(options: unknown): Promise<unknown>;
 	stop(): Promise<unknown>;
 	attachCursor(page: unknown, options?: Record<string, unknown>): Promise<CursorHandle>;
@@ -36,9 +37,12 @@ interface Client {
 
 interface Helper {
 	NOT_RUNNING_MESSAGE: string;
+	NOT_RESPONDING_MESSAGE: string;
 	resolveControlFile(options: {
 		env: Record<string, string | undefined>;
-		appData: string;
+		appData?: string;
+		platform?: NodeJS.Platform;
+		homeDir?: string;
 		exists: (file: string) => boolean;
 		readJson: (file: string) => unknown;
 		isPidAlive: (pid: number) => boolean;
@@ -120,6 +124,74 @@ describe("resolveControlFile", () => {
 			isPidAlive: () => true,
 		});
 		expect(result.file).toBe(packagedFile);
+	});
+
+	describe("userData directories per platform", () => {
+		const home = path.join("/", "home", "me");
+		const live = { port: 4, token: "t", pid: 44 };
+
+		function found(
+			platform: NodeJS.Platform,
+			env: Record<string, string | undefined>,
+			present: string[],
+		) {
+			const checked: string[] = [];
+			try {
+				return helper.resolveControlFile({
+					env,
+					platform,
+					homeDir: home,
+					exists: (file) => {
+						checked.push(file);
+						return present.includes(file);
+					},
+					readJson: () => live,
+					isPidAlive: () => true,
+				}).file;
+			} catch {
+				return checked;
+			}
+		}
+
+		it("uses %APPDATA% on Windows", () => {
+			const base = path.join("C:", "Roaming");
+			expect(found("win32", { APPDATA: base }, [])).toEqual([
+				path.join(base, "Recordly-dev", "control-server.json"),
+				path.join(base, "Recordly", "control-server.json"),
+			]);
+		});
+
+		it("uses ~/Library/Application Support on macOS, dev before packaged", () => {
+			const base = path.join(home, "Library", "Application Support");
+			const dev = path.join(base, "Recordly-dev", "control-server.json");
+			const packaged = path.join(base, "Recordly", "control-server.json");
+			expect(found("darwin", {}, [])).toEqual([dev, packaged]);
+			expect(found("darwin", {}, [dev, packaged])).toBe(dev);
+			expect(found("darwin", {}, [packaged])).toBe(packaged);
+		});
+
+		it("uses $XDG_CONFIG_HOME on Linux, else ~/.config", () => {
+			const xdg = path.join("/", "xdg");
+			expect(found("linux", { XDG_CONFIG_HOME: xdg }, [])).toEqual([
+				path.join(xdg, "Recordly-dev", "control-server.json"),
+				path.join(xdg, "Recordly", "control-server.json"),
+			]);
+			const config = path.join(home, ".config");
+			expect(found("linux", {}, [])).toEqual([
+				path.join(config, "Recordly-dev", "control-server.json"),
+				path.join(config, "Recordly", "control-server.json"),
+			]);
+		});
+
+		it("still checks RECORDLY_CONTROL_FILE first", () => {
+			const explicit = path.join("/", "custom", "control-server.json");
+			const base = path.join(home, "Library", "Application Support");
+			expect(found("darwin", { RECORDLY_CONTROL_FILE: explicit }, [])).toEqual([
+				explicit,
+				path.join(base, "Recordly-dev", "control-server.json"),
+				path.join(base, "Recordly", "control-server.json"),
+			]);
+		});
 	});
 });
 
@@ -239,6 +311,54 @@ describe("control client", () => {
 		});
 		server = undefined;
 		await expect(helper.connect({ control })).rejects.toThrow(NOT_RUNNING);
+	});
+
+	/** Accepts connections and reads requests but never answers (a busy or blocked main process). */
+	async function startSilentServer(): Promise<{ port: number; token: string }> {
+		server = http.createServer(() => undefined);
+		await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
+		return { port: (server.address() as AddressInfo).port, token: "secret-token" };
+	}
+
+	const NOT_RESPONDING =
+		"Recordly's control server isn't responding (it may be busy or showing a dialog); check the Recordly window";
+
+	it("exports the not-responding message", () => {
+		expect(helper.NOT_RESPONDING_MESSAGE).toBe(NOT_RESPONDING);
+	});
+
+	it("gives up on connect() when the server accepts but never answers", async () => {
+		const control = await startSilentServer();
+		const startedAt = Date.now();
+		await expect(helper.connect({ control, timeoutMs: 150 })).rejects.toThrow(NOT_RESPONDING);
+		expect(Date.now() - startedAt).toBeLessThan(2_000);
+	});
+
+	it("applies the timeout to status() and sources() but not to start()", async () => {
+		// Answers connect()'s ping, then never answers status/sources; answers start only after
+		// the quick timeout has passed (stop and start can legitimately take long).
+		let statusCalls = 0;
+		server = http.createServer((req, res) => {
+			req.resume();
+			const reply = (body: unknown) => {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(body));
+			};
+			if (req.url === "/v1/status" && ++statusCalls === 1) {
+				reply({ recording: false });
+			} else if (req.url === "/v1/recording/start") {
+				setTimeout(() => reply({ agentCursor: false }), 400);
+			}
+		});
+		await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
+		const control = { port: (server.address() as AddressInfo).port, token: "secret-token" };
+		const client = await helper.connect({ control, timeoutMs: 150 });
+
+		await expect(client.status()).rejects.toThrow(NOT_RESPONDING);
+		await expect(client.sources()).rejects.toThrow(NOT_RESPONDING);
+		await expect(client.start({ source: { display: 0 } })).resolves.toEqual({
+			agentCursor: false,
+		});
 	});
 
 	it("fails fast when no discovery file is live", async () => {
