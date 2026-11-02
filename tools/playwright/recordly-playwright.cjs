@@ -332,10 +332,35 @@ async function measureWindow(page) {
 	}));
 }
 
+const VIEWPORT_TOLERANCE_PX = 4;
+const MAX_SIZE_ATTEMPTS = 4;
+
+/** Re-reads the window until two consecutive reads agree (or maxMs): resizes land asynchronously. */
+async function measureSettledWindow(page, { intervalMs = 50, maxMs = 1000 } = {}) {
+	const same = (a, b) =>
+		a.innerWidth === b.innerWidth &&
+		a.innerHeight === b.innerHeight &&
+		a.outerWidth === b.outerWidth &&
+		a.outerHeight === b.outerHeight;
+	let previous = await measureWindow(page);
+	const deadline = Date.now() + maxMs;
+	while (Date.now() < deadline) {
+		await sleep(intervalMs);
+		const next = await measureWindow(page);
+		if (same(previous, next)) {
+			return next;
+		}
+		previous = next;
+	}
+	return previous;
+}
+
 /**
- * Sizes the browser window so the page viewport is exactly width x height. Needed when launched
- * with viewport: null (e.g. --app windows), where the OS window size governs. Throws if the
- * display can't fit it.
+ * Sizes the browser window so the page viewport is width x height. Needed when launched with
+ * viewport: null (e.g. --app windows), where the OS window size governs. Display scaling can leave
+ * it a pixel or two off; that's cosmetic (cursor mapping reads live metrics per event), so up to
+ * VIEWPORT_TOLERANCE_PX per axis is accepted with a warning. Throws only beyond that (the display
+ * can't fit it). Resolves to the achieved { width, height }.
  */
 async function sizeWindowForViewport(page, { width, height }) {
 	const cdp = await page.context().newCDPSession(page);
@@ -348,21 +373,49 @@ async function sizeWindowForViewport(page, { width, height }) {
 			});
 		}
 
-		let current = await measureWindow(page);
-		for (let attempt = 0; attempt < 2; attempt++) {
-			const chromeW = current.outerWidth - current.innerWidth;
-			const chromeH = current.outerHeight - current.innerHeight;
+		const resize = async (request) => {
 			await cdp.send("Browser.setWindowBounds", {
 				windowId,
-				bounds: { left: 0, top: 0, width: width + chromeW, height: height + chromeH },
+				bounds: { left: 0, top: 0, ...request },
 			});
-			current = await measureWindow(page);
-			if (current.innerWidth === width && current.innerHeight === height) {
-				return;
+			return measureSettledWindow(page);
+		};
+		const error = (view) =>
+			Math.abs(view.innerWidth - width) + Math.abs(view.innerHeight - height);
+
+		let current = await measureSettledWindow(page);
+		let best;
+		for (let attempt = 0; attempt < MAX_SIZE_ATTEMPTS && error(current) > 0; attempt++) {
+			// Correct by the remaining delta from where the window really is now.
+			const request = {
+				width: current.outerWidth + (width - current.innerWidth),
+				height: current.outerHeight + (height - current.innerHeight),
+			};
+			current = await resize(request);
+			if (!best || error(current) < best.error) {
+				best = { error: error(current), request };
 			}
 		}
+		// Fractional display scaling can make corrections oscillate; end on the closest size seen.
+		if (best && error(current) > best.error) {
+			current = await resize(best.request);
+		}
+
+		const achieved = { width: current.innerWidth, height: current.innerHeight };
+		if (achieved.width === width && achieved.height === height) {
+			return achieved;
+		}
+		if (
+			Math.abs(achieved.width - width) <= VIEWPORT_TOLERANCE_PX &&
+			Math.abs(achieved.height - height) <= VIEWPORT_TOLERANCE_PX
+		) {
+			console.warn(
+				`Browser viewport is ${achieved.width}×${achieved.height} rather than ${width}×${height}; continuing (cursor mapping is unaffected)`,
+			);
+			return achieved;
+		}
 		throw new Error(
-			`Couldn't size the browser viewport to ${width}×${height} (got ${current.innerWidth}×${current.innerHeight}); the display may be too small`,
+			`Couldn't size the browser viewport to ${width}×${height} (got ${achieved.width}×${achieved.height}); the display may be too small`,
 		);
 	} finally {
 		await cdp.detach().catch(() => undefined);

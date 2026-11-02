@@ -78,7 +78,8 @@ async function main() {
 	let failure;
 	try {
 		const page = await openCalibrationPage(context, url);
-		await sizeWindowForViewport(page, VIEWPORT);
+		const viewport = await sizeWindowForViewport(page, VIEWPORT);
+		console.log(`viewport: ${viewport.width}x${viewport.height}`);
 
 		await recordly.start({
 			source: { windowTitle: "Recordly calibration" },
@@ -99,12 +100,24 @@ async function main() {
 		failure = error;
 	}
 
-	try {
-		if (cursor) {
+	if (cursor) {
+		try {
 			await cursor.detach();
+		} catch (error) {
+			console.warn(`Warning: the final cursor flush failed: ${error.message}`);
 		}
-	} catch (error) {
-		console.warn(`Warning: the final cursor flush failed: ${error.message}`);
+		const stats = cursor.stats();
+		const { lastError, ...counts } = stats;
+		console.log(`cursor events: ${JSON.stringify(counts)}`);
+		if (stats.accepted === 0) {
+			console.warn(
+				"Warning: Recordly accepted no cursor events; the cursor will be missing.",
+			);
+		}
+		if (stats.failed > 0 || lastError) {
+			const reason = lastError ? `: ${lastError.message}` : "";
+			console.warn(`Warning: some cursor events failed to send${reason}`);
+		}
 	}
 
 	// Always stop an open take so the footage is kept, even when something above failed.

@@ -2,7 +2,7 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -50,7 +50,10 @@ interface Helper {
 		clientY: number,
 		correction?: { offsetX?: number; offsetY?: number },
 	): { x: number; y: number };
-	sizeWindowForViewport(page: unknown, size: { width: number; height: number }): Promise<void>;
+	sizeWindowForViewport(
+		page: unknown,
+		size: { width: number; height: number },
+	): Promise<{ width: number; height: number }>;
 }
 
 const helper = require("./recordly-playwright.cjs") as Helper;
@@ -379,9 +382,22 @@ describe("control client", () => {
 });
 
 describe("sizeWindowForViewport", () => {
-	/** A fake page + CDP session whose window obeys `minWidth` (a small display clamps it). */
-	function fakeWindow(opts: { chromeW: number; chromeH: number; maxWidth?: number }) {
+	/**
+	 * A fake page + CDP session. `maxWidth` clamps the window (a small display); `widthError` is
+	 * added to the width of the Nth resize (display scaling landing a couple of px off; the last
+	 * entry repeats); `staleReads` makes the first reads after a resize return the old size.
+	 */
+	function fakeWindow(opts: {
+		chromeW: number;
+		chromeH: number;
+		maxWidth?: number;
+		widthError?: number[];
+		staleReads?: number;
+	}) {
 		const state = { outerW: 1000, outerH: 700, chromeW: opts.chromeW, chromeH: opts.chromeH };
+		let stale: typeof state | undefined;
+		let staleLeft = 0;
+		let resizes = 0;
 		let windowState = "maximized";
 		const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
 		const cdp = {
@@ -399,7 +415,12 @@ describe("sizeWindowForViewport", () => {
 					windowState = bounds.windowState;
 				}
 				if (bounds.width !== undefined && bounds.height !== undefined) {
-					state.outerW = Math.min(bounds.width, opts.maxWidth ?? Infinity);
+					const errors = opts.widthError ?? [0];
+					const error = errors[Math.min(resizes, errors.length - 1)];
+					resizes += 1;
+					stale = { ...state };
+					staleLeft = opts.staleReads ?? 0;
+					state.outerW = Math.min(bounds.width + error, opts.maxWidth ?? Infinity);
 					state.outerH = bounds.height;
 				}
 				return {};
@@ -408,19 +429,35 @@ describe("sizeWindowForViewport", () => {
 		};
 		const page = {
 			context: () => ({ newCDPSession: async () => cdp }),
-			evaluate: async () => ({
-				outerWidth: state.outerW,
-				outerHeight: state.outerH,
-				innerWidth: state.outerW - state.chromeW,
-				innerHeight: state.outerH - state.chromeH,
-			}),
+			evaluate: async () => {
+				let view = state;
+				if (stale && staleLeft > 0) {
+					staleLeft -= 1;
+					view = stale;
+				}
+				return {
+					outerWidth: view.outerW,
+					outerHeight: view.outerH,
+					innerWidth: view.outerW - view.chromeW,
+					innerHeight: view.outerH - view.chromeH,
+				};
+			},
 		};
 		return { page, sent };
 	}
 
+	const resizeCalls = (sent: Array<{ method: string; params: Record<string, unknown> }>) =>
+		sent.filter(
+			(call) =>
+				call.method === "Browser.setWindowBounds" &&
+				(call.params.bounds as { width?: number }).width !== undefined,
+		);
+
 	it("restores a normal window and sizes it so the viewport matches", async () => {
 		const { page, sent } = fakeWindow({ chromeW: 16, chromeH: 130 });
-		await helper.sizeWindowForViewport(page, { width: 1440, height: 900 });
+		await expect(
+			helper.sizeWindowForViewport(page, { width: 1440, height: 900 }),
+		).resolves.toEqual({ width: 1440, height: 900 });
 		const stateCall = sent.findIndex(
 			(call) =>
 				call.method === "Browser.setWindowBounds" &&
@@ -435,6 +472,41 @@ describe("sizeWindowForViewport", () => {
 		expect(sizeCall).toBeGreaterThan(stateCall);
 	});
 
+	it("corrects a window that lands a couple of px off, without warning", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		try {
+			const { page, sent } = fakeWindow({ chromeW: 16, chromeH: 130, widthError: [2, 0] });
+			await expect(
+				helper.sizeWindowForViewport(page, { width: 1440, height: 900 }),
+			).resolves.toEqual({ width: 1440, height: 900 });
+			expect(resizeCalls(sent)).toHaveLength(2);
+			expect(warn).not.toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it("waits for a resize to settle before judging the size", async () => {
+		const { page } = fakeWindow({ chromeW: 16, chromeH: 130, staleReads: 1 });
+		await expect(
+			helper.sizeWindowForViewport(page, { width: 1440, height: 900 }),
+		).resolves.toEqual({ width: 1440, height: 900 });
+	});
+
+	it("warns and returns the achieved size when stuck within 4px", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		try {
+			const { page } = fakeWindow({ chromeW: 16, chromeH: 130, widthError: [2] });
+			await expect(
+				helper.sizeWindowForViewport(page, { width: 1440, height: 900 }),
+			).resolves.toEqual({ width: 1442, height: 900 });
+			expect(warn).toHaveBeenCalledTimes(1);
+			expect(String(warn.mock.calls[0][0])).toContain("1442×900");
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
 	it("throws a clear error when the display is too small", async () => {
 		const { page } = fakeWindow({ chromeW: 16, chromeH: 130, maxWidth: 1200 });
 		await expect(
@@ -442,5 +514,12 @@ describe("sizeWindowForViewport", () => {
 		).rejects.toThrow(
 			/Couldn't size the browser viewport to 1440×900 \(got 1184×900\); the display may be too small/,
 		);
+	});
+
+	it("throws when the result is far off even if it keeps landing off", async () => {
+		const { page } = fakeWindow({ chromeW: 16, chromeH: 130, widthError: [50] });
+		await expect(
+			helper.sizeWindowForViewport(page, { width: 1440, height: 900 }),
+		).rejects.toThrow(/got 1490×900\); the display may be too small/);
 	});
 });
