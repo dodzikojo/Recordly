@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -29,13 +30,23 @@ export async function writeDiscoveryFile(
 	dir: string,
 	info: { port: number; token: string; pid: number },
 ): Promise<string> {
-	await fs.mkdir(dir, { recursive: true });
+	await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 	const file = path.join(dir, CONTROL_DISCOVERY_FILE);
-	await fs.writeFile(
-		file,
-		JSON.stringify({ port: info.port, token: info.token, pid: info.pid }),
-		"utf8",
-	);
+	// The file holds the bearer token: write it owner-only to a temp file, then rename over the
+	// target. A stale file with looser permissions is replaced, not reused (mode only applies on
+	// creation). rename replaces an existing file on Windows too.
+	const tmp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+	try {
+		await fs.writeFile(
+			tmp,
+			JSON.stringify({ port: info.port, token: info.token, pid: info.pid }),
+			{ encoding: "utf8", mode: 0o600 },
+		);
+		await fs.rename(tmp, file);
+	} catch (error) {
+		await fs.rm(tmp, { force: true }).catch(() => undefined);
+		throw error;
+	}
 	return file;
 }
 

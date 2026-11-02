@@ -69,6 +69,27 @@ describe("discovery file", () => {
 		await expect(removeDiscoveryFile(dir)).resolves.toBeUndefined();
 	});
 
+	it.skipIf(process.platform === "win32")(
+		"writes the token owner-only, even over a stale file",
+		async () => {
+			const stale = path.join(dir, CONTROL_DISCOVERY_FILE);
+			await fs.writeFile(stale, "old", { mode: 0o644 });
+			const file = await writeDiscoveryFile(dir, { port: 1, token: "t", pid: 2 });
+			expect((await fs.stat(file)).mode & 0o077).toBe(0);
+			expect((await fs.readdir(dir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		},
+	);
+
+	it("overwrites an existing discovery file", async () => {
+		await writeDiscoveryFile(dir, { port: 1, token: "old", pid: 2 });
+		const file = await writeDiscoveryFile(dir, { port: 3, token: "new", pid: 4 });
+		expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({
+			port: 3,
+			token: "new",
+			pid: 4,
+		});
+	});
+
 	it("creates the directory if needed", async () => {
 		const nested = path.join(dir, "nested");
 		const file = await writeDiscoveryFile(nested, { port: 1, token: "t", pid: 2 });
