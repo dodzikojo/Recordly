@@ -94,7 +94,9 @@ async function main() {
 		await sleep(1000);
 		for (const selector of BUTTONS) {
 			await glideClick(page, page.locator(selector));
-			await sleep(1000);
+			// Recordly merges clicks closer than CLICK_CLUSTER_MERGE_GAP_MS (2500 ms) into one
+			// auto-zoom; 3000 ms plus the glide and click pause keeps each click's zoom separate.
+			await sleep(3000);
 		}
 	} catch (error) {
 		failure = error;

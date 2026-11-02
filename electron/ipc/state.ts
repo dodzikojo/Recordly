@@ -90,6 +90,11 @@ export let windowBoundsCaptureInterval: NodeJS.Timeout | null = null;
 // Agent-driven takes ignore the real cursor and draw it from injected events.
 export let agentCursorTakeActive = false;
 export let lastAgentCursorEventAtMs: number | null = null;
+// Wall-clock time the native capture helper reported it had started (video t=0). Recorded for
+// every take but only consulted for agent-driven takes.
+export let nativeCaptureStartedAtMs: number | null = null;
+// How far the cursor clock trails the video's t=0 in an agent-driven take (0 for human takes).
+export let agentCursorTimeLeadMs = 0;
 
 // ── Native macOS window source cache ─────────────────────────────────────────
 export let cachedNativeMacWindowSources: import("./types").NativeMacWindowSource[] | null = null;
@@ -280,6 +285,12 @@ export function setAgentCursorTakeActive(v: boolean) {
 }
 export function setLastAgentCursorEventAtMs(v: number | null) {
 	lastAgentCursorEventAtMs = v;
+}
+export function setNativeCaptureStartedAtMs(v: number | null) {
+	nativeCaptureStartedAtMs = v;
+}
+export function setAgentCursorTimeLeadMs(v: number) {
+	agentCursorTimeLeadMs = v;
 }
 
 export function setCachedNativeMacWindowSources(

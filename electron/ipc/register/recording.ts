@@ -16,6 +16,7 @@ import { controlEvents } from "../../control/controlEvents";
 import { showCursor } from "../../cursorHider";
 import { getMonitorHandles } from "../monitorResolver";
 import { ALLOW_RECORDLY_WINDOW_CAPTURE } from "../constants";
+import { computeAgentCursorTimeLeadMs } from "../cursor/agentCursor";
 import { startWindowBoundsCapture, stopWindowBoundsCapture } from "../cursor/bounds";
 import { startInteractionCapture, stopInteractionCapture } from "../cursor/interaction";
 import { startNativeCursorMonitor, stopNativeCursorMonitor } from "../cursor/monitor";
@@ -87,6 +88,7 @@ import {
 	cachedSystemCursorAssets,
 	cachedSystemCursorAssetsSourceMtimeMs,
 	currentVideoPath,
+	cursorCaptureStartTimeMs,
 	ffmpegCaptureOutputBuffer,
 	ffmpegCaptureProcess,
 	ffmpegCaptureTargetPath,
@@ -96,12 +98,14 @@ import {
 	nativeCaptureOutputBuffer,
 	nativeCapturePaused,
 	nativeCaptureProcess,
+	nativeCaptureStartedAtMs,
 	nativeCaptureSystemAudioPath,
 	nativeCaptureTargetPath,
 	nativeScreenRecordingActive,
 	selectedSource,
 	setActiveCursorSamples,
 	setAgentCursorTakeActive,
+	setAgentCursorTimeLeadMs,
 	setCachedSystemCursorAssets,
 	setCachedSystemCursorAssetsSourceMtimeMs,
 	setCursorCaptureStartTimeMs,
@@ -117,6 +121,7 @@ import {
 	setNativeCaptureOutputBuffer,
 	setNativeCapturePaused,
 	setNativeCaptureProcess,
+	setNativeCaptureStartedAtMs,
 	setNativeCaptureStopRequested,
 	setNativeCaptureSystemAudioPath,
 	setNativeCaptureTargetPath,
@@ -570,6 +575,7 @@ export function registerRecordingHandlers(
 					});
 
 					await waitForWindowsCaptureStart(wcProc);
+					setNativeCaptureStartedAtMs(Date.now());
 					const microphoneFallbackRequired =
 						browserMicFallbackRequested ||
 						shouldUseWindowsBrowserMicrophoneFallback(captureOutput, options);
@@ -772,6 +778,7 @@ export function registerRecordingHandlers(
 				});
 
 				await waitForNativeCaptureStart(captProc);
+				setNativeCaptureStartedAtMs(Date.now());
 				setNativeScreenRecordingActive(true);
 
 				// If the native helper reported MICROPHONE_CAPTURE_UNAVAILABLE, it started
@@ -1559,6 +1566,7 @@ export function registerRecordingHandlers(
 			});
 
 			await waitForFfmpegCaptureStart(ffProc);
+			setNativeCaptureStartedAtMs(Date.now());
 			setFfmpegScreenRecordingActive(true);
 			return { success: true };
 		} catch (error) {
@@ -1843,6 +1851,12 @@ export function registerRecordingHandlers(
 			setLinuxCursorScreenPoint(null);
 			setLastLeftClick(null);
 			setLastAgentCursorEventAtMs(null);
+			// Agent-driven takes only: align injected event times with the video's t=0.
+			if (agentCursorTakeActive) {
+				setAgentCursorTimeLeadMs(
+					computeAgentCursorTimeLeadMs(cursorCaptureStartTimeMs, nativeCaptureStartedAtMs),
+				);
+			}
 			if (!agentCursorTakeActive) {
 				sampleCursorPoint();
 				startCursorSampling();
@@ -1861,6 +1875,8 @@ export function registerRecordingHandlers(
 			setActiveCursorSamples([]);
 			setAgentCursorTakeActive(false);
 			setLastAgentCursorEventAtMs(null);
+			setAgentCursorTimeLeadMs(0);
+			setNativeCaptureStartedAtMs(null);
 		}
 
 		const source = selectedSource || { name: "Screen" };

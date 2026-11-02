@@ -1,5 +1,6 @@
 import {
 	agentCursorTakeActive,
+	agentCursorTimeLeadMs,
 	isCursorCaptureActive,
 	lastAgentCursorEventAtMs,
 	setLastAgentCursorEventAtMs,
@@ -36,6 +37,27 @@ export class AgentCursorInactiveError extends Error {
 }
 
 export const MAX_AGENT_CURSOR_BATCH = 1000;
+
+const MAX_AGENT_CURSOR_TIME_LEAD_MS = 10_000;
+
+/**
+ * How far the cursor clock starts after the video's t=0 (the native helper's capture start).
+ * Returns 0 when the stamp is missing (browser-capture fallback), negative, or implausibly
+ * large (stale stamp from an earlier take, clock oddities).
+ */
+export function computeAgentCursorTimeLeadMs(
+	cursorCaptureStartMs: number,
+	nativeCaptureStartedMs: number | null,
+): number {
+	if (nativeCaptureStartedMs === null) {
+		return 0;
+	}
+	const lead = cursorCaptureStartMs - nativeCaptureStartedMs;
+	if (!Number.isFinite(lead) || lead < 0 || lead > MAX_AGENT_CURSOR_TIME_LEAD_MS) {
+		return 0;
+	}
+	return lead;
+}
 
 const CSS_CURSOR_TO_VISUAL_TYPE = new Map<string, CursorVisualType>([
 	["pointer", "pointer"],
@@ -153,7 +175,11 @@ export function ingestAgentCursorEvents(raw: unknown): AgentCursorIngestResult {
 			}
 
 			const point = normalizeScreenPointToCapture({ x: event.x, y: event.y });
-			const timeMs = getCursorCaptureElapsedMs(event.atMs);
+			// The video's t=0 is when the native helper started capturing, which precedes the
+			// cursor clock (set when the HUD reports recording). Shift agent events later by that
+			// lead so a click lands on the frame where it is visible. Ordering/pause checks above
+			// stay on the raw atMs.
+			const timeMs = getCursorCaptureElapsedMs(event.atMs) + agentCursorTimeLeadMs;
 			const cursorType = mapCssCursorToVisualType(event.cursor);
 
 			if (event.kind === "down") {

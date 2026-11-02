@@ -52,6 +52,42 @@ describe("matchSource", () => {
 		}
 	});
 
+	it("prefers the single window whose title equals the query exactly", () => {
+		const app: CaptureSourceSummary = {
+			id: "window:20:0",
+			name: "ORCA · AI design coordination",
+			kind: "window",
+		};
+		const chrome: CaptureSourceSummary = {
+			id: "window:21:0",
+			name: "ORCA · AI design coordination - Google Chrome",
+			kind: "window",
+		};
+		const edge: CaptureSourceSummary = {
+			id: "window:22:0",
+			name: "ORCA · AI design coordination - Microsoft Edge",
+			kind: "window",
+		};
+		expect(
+			matchSource([...screens, chrome, app, edge], {
+				windowTitle: "  orca · ai design coordination ",
+			}),
+		).toEqual({ ok: true, source: app });
+	});
+
+	it("stays ambiguous when more than one window matches exactly", () => {
+		const a: CaptureSourceSummary = { id: "window:30:0", name: "ORCA", kind: "window" };
+		const b: CaptureSourceSummary = { id: "window:31:0", name: "orca", kind: "window" };
+		const c: CaptureSourceSummary = {
+			id: "window:32:0",
+			name: "ORCA - Chrome",
+			kind: "window",
+		};
+		const result = matchSource([a, b, c], { windowTitle: "ORCA" });
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.candidates).toEqual([a, b, c]);
+	});
+
 	it("lists all windows when nothing matches", () => {
 		const result = matchSource(sources, { windowTitle: "zzz" });
 		expect(result.ok).toBe(false);

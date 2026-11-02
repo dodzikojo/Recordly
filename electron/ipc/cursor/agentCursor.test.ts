@@ -25,6 +25,7 @@ import {
 	lastAgentCursorEventAtMs,
 	setActiveCursorSamples,
 	setAgentCursorTakeActive,
+	setAgentCursorTimeLeadMs,
 	setCursorCaptureStartTimeMs,
 	setIsCursorCaptureActive,
 	setLastAgentCursorEventAtMs,
@@ -33,6 +34,7 @@ import {
 } from "../state";
 import {
 	AgentCursorInactiveError,
+	computeAgentCursorTimeLeadMs,
 	ingestAgentCursorEvents,
 	MAX_AGENT_CURSOR_BATCH,
 	mapCssCursorToVisualType,
@@ -72,6 +74,20 @@ describe("ingestAgentCursorEvents", () => {
 		setCursorCaptureStartTimeMs(10_000);
 		setIsCursorCaptureActive(true);
 		setAgentCursorTakeActive(true);
+		setAgentCursorTimeLeadMs(0);
+	});
+
+	it("shifts event times by the native-start lead so they line up with the video", () => {
+		setAgentCursorTimeLeadMs(900);
+		ingestAgentCursorEvents([{ atMs: 10_250, x: 500, y: 250, kind: "move" }]);
+		expect(lastSample().timeMs).toBe(1_150);
+		// Ordering still uses the raw atMs.
+		expect(lastAgentCursorEventAtMs).toBe(10_250);
+	});
+
+	it("leaves event times unshifted with a zero lead", () => {
+		ingestAgentCursorEvents([{ atMs: 10_250, x: 500, y: 250, kind: "move" }]);
+		expect(lastSample().timeMs).toBe(250);
 	});
 
 	it("ingests a move", () => {
@@ -195,5 +211,21 @@ describe("ingestAgentCursorEvents", () => {
 		expect(result.accepted).toBe(0);
 		expect(result.rejected).toHaveLength(MAX_AGENT_CURSOR_BATCH + 1);
 		expect(activeCursorSamples).toHaveLength(0);
+	});
+});
+
+describe("computeAgentCursorTimeLeadMs", () => {
+	it("returns the gap between the cursor clock and the native capture start", () => {
+		expect(computeAgentCursorTimeLeadMs(10_900, 10_000)).toBe(900);
+		expect(computeAgentCursorTimeLeadMs(10_000, 10_000)).toBe(0);
+		expect(computeAgentCursorTimeLeadMs(20_000, 10_000)).toBe(10_000);
+	});
+
+	it("falls back to 0 for a missing, negative or implausible stamp", () => {
+		expect(computeAgentCursorTimeLeadMs(10_900, null)).toBe(0);
+		expect(computeAgentCursorTimeLeadMs(10_000, 10_900)).toBe(0);
+		expect(computeAgentCursorTimeLeadMs(20_001, 10_000)).toBe(0);
+		expect(computeAgentCursorTimeLeadMs(Number.NaN, 10_000)).toBe(0);
+		expect(computeAgentCursorTimeLeadMs(10_900, Number.NaN)).toBe(0);
 	});
 });

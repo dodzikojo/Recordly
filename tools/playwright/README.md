@@ -20,6 +20,8 @@ It uses your installed Chrome (`channel: "chrome"`), so no browser download is n
 A Chrome window with five buttons opens, is sized to a 1440x900 viewport, and each button is
 clicked in turn while Recordly records the window. The script prints `videoPath` and
 `projectPath`; open the project and check the drawn cursor lands on each button.
+Clicks are spaced about 3.5 s apart so each one gets its own auto-zoom (Recordly merges
+clicks closer than 2.5 s).
 
 ## Use it from your own script
 

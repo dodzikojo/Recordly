@@ -68,6 +68,14 @@ export function matchSource(sources: CaptureSourceSummary[], selector: unknown):
 		if (matches.length === 1) {
 			return { ok: true, source: matches[0] };
 		}
+		// A page-titled --app window ("ORCA") is always a substring of its browser-chrome siblings
+		// ("ORCA - Google Chrome"); a single exact title match is unambiguous.
+		const exactMatches = matches.filter(
+			(source) => source.name.trim().toLowerCase() === needle,
+		);
+		if (matches.length > 1 && exactMatches.length === 1) {
+			return { ok: true, source: exactMatches[0] };
+		}
 		if (matches.length === 0) {
 			return {
 				ok: false,

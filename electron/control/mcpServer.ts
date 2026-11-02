@@ -19,12 +19,18 @@ const sourceSchema = z.union([
 		windowTitle: z
 			.string()
 			.min(1)
-			.describe("Substring of the window title; must match exactly one window"),
+			.describe(
+				"Window title (case-insensitive substring; an exact title match wins over substring matches)",
+			),
 	}),
 ]);
 
 const cursorEventSchema = z.strictObject({
-	atMs: z.number().describe("Milliseconds since the take started"),
+	atMs: z
+		.number()
+		.describe(
+			"Wall-clock epoch milliseconds (Date.now() on this machine) when the event happened",
+		),
 	x: z.number().describe("Screen x coordinate"),
 	y: z.number().describe("Screen y coordinate"),
 	kind: z.enum(["move", "down", "up"]),
