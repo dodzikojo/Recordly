@@ -79,6 +79,8 @@ type RendererMarketplaceSearchResult =
 type RendererRecordingSessionData = import("./ipc/types").RecordingSessionData;
 type RendererRecordingControlRequest = import("./control/controlEvents").RecordingControlRequest;
 type RendererRecordingControlReply = import("./control/controlEvents").RecordingControlReply;
+type RendererControlSaveTakeRequest = import("./control/controlEvents").ControlSaveTakeRequest;
+type RendererSaveTakeResult = import("./control/controlEvents").SaveTakeResult;
 
 interface RendererFfmpegAudioMuxMetrics {
 	tempVideoWriteMs?: number;
@@ -660,6 +662,13 @@ interface Window {
 		replyRecordingControl: (reply: RendererRecordingControlReply) => void;
 		/** Main sends no control request to the HUD before this (preferences loaded). */
 		notifyRecordingControlReady: () => void;
+		/** Editor: a fresh take is loaded and its auto-zooms applied. Main ignores it unless armed. */
+		notifyFreshTakeSettled: (videoPath: string) => void;
+		/** Local control server → editor: save the loaded take without any dialog. */
+		onControlSaveTake: (
+			callback: (request: RendererControlSaveTakeRequest) => void,
+		) => () => void;
+		replyControlSaveTake: (result: RendererSaveTakeResult) => void;
 		onRecordingStateChanged: (
 			callback: (state: { recording: boolean; sourceName: string }) => void,
 		) => () => void;

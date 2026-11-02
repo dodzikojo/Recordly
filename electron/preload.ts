@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { RecordingControlReply, RecordingControlRequest } from "./control/controlEvents";
+import type {
+	ControlSaveTakeRequest,
+	RecordingControlReply,
+	RecordingControlRequest,
+	SaveTakeResult,
+} from "./control/controlEvents";
 import type { RecordingSessionData } from "./ipc/types";
 
 type NativeVideoExportWriteResult = { success: boolean; error?: string };
@@ -636,6 +641,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 	replyRecordingControl: (reply: RecordingControlReply) => {
 		ipcRenderer.send("recording-control-reply", reply);
+	},
+	// Editor: a freshly recorded take is loaded and its auto-zooms are applied. Main ignores this
+	// unless a controlled stop is waiting for it.
+	notifyFreshTakeSettled: (videoPath: string) => {
+		ipcRenderer.send("control-fresh-take-settled", videoPath);
+	},
+	// Editor: main asks for a dialog-free save of the loaded take (local control server only).
+	onControlSaveTake: (callback: (request: ControlSaveTakeRequest) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, request: ControlSaveTakeRequest) =>
+			callback(request);
+		ipcRenderer.on("control-save-take", listener);
+		return () => ipcRenderer.removeListener("control-save-take", listener);
+	},
+	replyControlSaveTake: (result: SaveTakeResult) => {
+		ipcRenderer.send("control-save-take-result", result);
 	},
 	onRecordingStateChanged: (
 		callback: (state: { recording: boolean; sourceName: string }) => void,

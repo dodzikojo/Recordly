@@ -104,6 +104,45 @@ export function createElectronControllerDeps(main: ControlMainHooks): Controller
 		});
 	}
 
+	// Editor → main. Only the editor window is believed, and anything malformed is dropped.
+	function isFromEditor(event: IpcMainEvent): boolean {
+		const editor = main.getEditorWindow();
+		return Boolean(
+			editor && !editor.isDestroyed() && editor.webContents.id === event.sender.id,
+		);
+	}
+	ipcMain.on("control-fresh-take-settled", (event: IpcMainEvent, videoPath: unknown) => {
+		if (typeof videoPath !== "string" || videoPath === "" || !isFromEditor(event)) {
+			return;
+		}
+		try {
+			controlEvents.emit("fresh-take-settled", videoPath);
+		} catch (error) {
+			console.error("control: fresh-take-settled listener failed:", error);
+		}
+	});
+	ipcMain.on("control-save-take-result", (event: IpcMainEvent, raw: unknown) => {
+		if (typeof raw !== "object" || raw === null || !isFromEditor(event)) {
+			return;
+		}
+		const result = raw as Record<string, unknown>;
+		if (typeof result.requestId !== "string") {
+			return;
+		}
+		try {
+			controlEvents.emit("save-take-result", {
+				requestId: result.requestId,
+				ok: result.ok === true,
+				...(typeof result.projectPath === "string"
+					? { projectPath: result.projectPath }
+					: {}),
+				...(typeof result.error === "string" ? { error: result.error } : {}),
+			});
+		} catch (error) {
+			console.error("control: save-take-result listener failed:", error);
+		}
+	});
+
 	const pendingReplies = new Map<
 		string,
 		{ contentsId: number; finish: (reply: HudReply) => void }
