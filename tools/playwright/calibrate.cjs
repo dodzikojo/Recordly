@@ -56,6 +56,7 @@ async function main() {
 	const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "recordly-calibration-"));
 	const context = await chromium.launchPersistentContext(userDataDir, {
 		channel: "chrome",
+		chromiumSandbox: true,
 		headless: options.headless,
 		viewport: null,
 		args: [`--app=${url}`],

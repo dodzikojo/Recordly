@@ -11,7 +11,9 @@ cd tools/playwright
 npm install --ignore-scripts
 ```
 
-It uses your installed Chrome (`channel: "chrome"`), so no browser download is needed.
+It uses your installed Chrome (`channel: "chrome"`), so no browser download is needed. Launch
+Chrome with `chromiumSandbox: true`; otherwise Playwright adds `--no-sandbox` and Chrome shows a
+warning bar inside the recorded window.
 
 ## Run the calibration take
 
