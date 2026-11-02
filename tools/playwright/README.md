@@ -30,6 +30,8 @@ clicks closer than 2.5 s).
 const {
 	connect,
 	glideClick,
+	glideTo,
+	openAppPage,
 	sizeWindowForViewport,
 } = require("<recordly checkout>/tools/playwright/recordly-playwright.cjs");
 
@@ -40,6 +42,22 @@ await glideClick(page, page.getByRole("button", { name: "Go" }));
 await cursor.detach(); // flushes; a 409 (take already over) counts as done
 const { videoPath, projectPath } = await recordly.stop();
 ```
+
+`glideClick` and `glideTo` start from wherever the page last saw the mouse (the in-page listener
+records every mouse move, including your own `page.mouse.move` and `locator.click` calls), so the
+drawn cursor never jumps to a stale point. `glideTo(page, locator, { durationMs = 600, pauseMs = 120 })`
+is the same eased travel to the locator's centre without the click; it resolves to the client
+`{ x, y }` it ended on. Use it to bring the cursor to a native `<select>` and then call
+`locator.selectOption(...)`, so Chrome's popup (which a window recording doesn't capture) never opens.
+
+`openAppPage(context, url, { timeoutMs = 5000 })` returns the page of a Chrome `--app=<url>` window
+in a persistent context: one already open at `url` (prefix match), else one that arrives within
+`timeoutMs`, else the first page (or a new one) navigated to `url`. The page is brought to the front.
+`calibrate.cjs` uses it.
+
+Call `attachCursor` once per take; it can be called again on the same browser context after
+`detach()` (the page binding and init script are installed once per context and reused, and events
+after `detach()` are ignored).
 
 If your script fails after `start`, call `detach()` then `stop()` so the footage is kept; a take
 left running makes the next `start` fail with `conflict`.

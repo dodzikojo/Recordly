@@ -14,7 +14,12 @@ const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { chromium } = require("playwright");
-const { connect, glideClick, sizeWindowForViewport } = require("./recordly-playwright.cjs");
+const {
+	connect,
+	glideClick,
+	openAppPage,
+	sizeWindowForViewport,
+} = require("./recordly-playwright.cjs");
 
 const VIEWPORT = { width: 1440, height: 900 };
 const BUTTONS = ["#top-left", "#top-right", "#bottom-right", "#bottom-left", "#center"];
@@ -41,23 +46,6 @@ function parseArgs(argv) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function openCalibrationPage(context, url) {
-	// With --app the window opens by itself; fall back to navigating a blank page if it doesn't.
-	const isCalibration = (page) => page.url().startsWith(url);
-	let page = context.pages().find(isCalibration);
-	if (!page) {
-		page = await context
-			.waitForEvent("page", { predicate: isCalibration, timeout: 5000 })
-			.catch(() => undefined);
-	}
-	if (!page) {
-		page = context.pages()[0] || (await context.newPage());
-		await page.goto(url);
-	}
-	await page.bringToFront();
-	return page;
-}
-
 async function main() {
 	const options = parseArgs(process.argv.slice(2));
 
@@ -77,7 +65,7 @@ async function main() {
 	let cursor;
 	let failure;
 	try {
-		const page = await openCalibrationPage(context, url);
+		const page = await openAppPage(context, url);
 		const viewport = await sizeWindowForViewport(page, VIEWPORT);
 		console.log(`viewport: ${viewport.width}x${viewport.height}`);
 

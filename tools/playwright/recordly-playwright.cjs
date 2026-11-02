@@ -232,8 +232,9 @@ function pageEventToScreen(metrics, clientX, clientY, correction) {
 
 /**
  * Runs inside the page (serialised by Playwright, so it must be self-contained). Installs
- * capture-phase mouse listeners once per document and forwards each event, with the window
- * metrics read at that instant, through the exposed binding.
+ * capture-phase mouse listeners once per document. Every event updates window.__recordlyLastMouse
+ * (glideClick starts from it) and is forwarded, with the window metrics read at that instant,
+ * through the exposed binding.
  */
 function installCursorListener(bindingName) {
 	const flag = `__recordlyCursorInstalled_${bindingName}`;
@@ -244,6 +245,7 @@ function installCursorListener(bindingName) {
 
 	const buttons = ["left", "middle", "right"];
 	const forward = (kind) => (event) => {
+		window.__recordlyLastMouse = { x: event.clientX, y: event.clientY };
 		let button;
 		if (kind !== "move") {
 			button = buttons[event.button];
@@ -292,13 +294,47 @@ function installCursorListener(bindingName) {
 
 let bindingCounter = 0;
 
+/**
+ * Per browser context: ONE exposed binding and ONE init script, however many attachCursor/detach
+ * cycles run (neither can be removed, so adding them per attach piles up listeners). `session`
+ * is the handler of the currently attached cursor, or null when events should be ignored.
+ */
+const cursorHosts = new WeakMap();
+
+function getCursorHost(context) {
+	let host = cursorHosts.get(context);
+	if (!host) {
+		const bindingName = `__recordlyCursor_${process.pid}_${++bindingCounter}`;
+		const created = { bindingName, session: null, ready: null };
+		created.ready = (async () => {
+			await context.exposeBinding(bindingName, (_source, raw) => {
+				if (created.session) {
+					created.session(raw);
+				}
+			});
+			await context.addInitScript(installCursorListener, bindingName);
+			for (const existing of context.pages()) {
+				await existing.evaluate(installCursorListener, bindingName).catch(() => undefined);
+			}
+		})();
+		cursorHosts.set(context, created);
+		// A failed setup must not be cached: the next attachCursor starts over.
+		created.ready.catch(() => {
+			if (cursorHosts.get(context) === created) {
+				cursorHosts.delete(context);
+			}
+		});
+		host = created;
+	}
+	return host;
+}
+
 function isFiniteNumber(value) {
 	return typeof value === "number" && Number.isFinite(value);
 }
 
 async function attachCursor(client, page, { offsetX = 0, offsetY = 0, flushMs = 50 } = {}) {
-	const context = page.context();
-	const bindingName = `__recordlyCursor_${process.pid}_${++bindingCounter}`;
+	const host = getCursorHost(page.context());
 	const correction = { offsetX, offsetY };
 
 	let queue = [];
@@ -336,7 +372,7 @@ async function attachCursor(client, page, { offsetX = 0, offsetY = 0, flushMs = 
 		return run;
 	}
 
-	await context.exposeBinding(bindingName, (_source, raw) => {
+	function onRawEvent(raw) {
 		if (detached || !raw || !raw.metrics) {
 			return;
 		}
@@ -350,11 +386,11 @@ async function attachCursor(client, page, { offsetX = 0, offsetY = 0, flushMs = 
 			event.cursor = raw.cursor;
 		}
 		queue.push(event);
-	});
-	await context.addInitScript(installCursorListener, bindingName);
-	for (const existing of context.pages()) {
-		await existing.evaluate(installCursorListener, bindingName).catch(() => undefined);
 	}
+
+	await host.ready;
+	// Route events to this session; a previous session that was never detached stops receiving.
+	host.session = onRawEvent;
 
 	const timer = setInterval(() => {
 		if (queue.length > 0) {
@@ -371,6 +407,9 @@ async function attachCursor(client, page, { offsetX = 0, offsetY = 0, flushMs = 
 		flush,
 		async detach() {
 			detached = true;
+			if (host.session === onRawEvent) {
+				host.session = null;
+			}
 			clearInterval(timer);
 			// A 409 here means the take already ended: that's done, not a failure. Anything else
 			// is surfaced, but the caller should still call stop() so the take isn't lost.
@@ -495,19 +534,36 @@ function easeInOutCubic(t) {
 	return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
 
+async function readPageMousePosition(page) {
+	try {
+		const position = await page.evaluate(() => window.__recordlyLastMouse || null);
+		if (position && isFiniteNumber(position.x) && isFiniteNumber(position.y)) {
+			return { x: position.x, y: position.y };
+		}
+	} catch {
+		// No evaluate, or the page is navigating: fall back.
+	}
+	return undefined;
+}
+
 /**
- * Moves the mouse to the centre of `locator` along an eased path (~1 step per 16 ms), pauses, then
- * clicks. Uses real Playwright mouse input, so the injected listeners see genuine DOM events.
+ * Moves the mouse to the centre of `locator` along an eased path (~1 step per 16 ms), then waits
+ * `pauseMs`, without clicking. Uses real Playwright mouse input, so the injected listeners see
+ * genuine DOM events. Resolves to the client point it ended on. Use it to bring the drawn cursor to
+ * an element whose value you then set programmatically (e.g. `selectOption` on a native <select>,
+ * so Chrome's popup, which a window recording doesn't capture, never opens).
  */
-async function glideClick(page, locator, { durationMs = 600, pauseMs = 120 } = {}) {
+async function glideTo(page, locator, { durationMs = 600, pauseMs = 120 } = {}) {
 	await locator.scrollIntoViewIfNeeded();
 	const box = await locator.boundingBox();
 	if (!box) {
-		throw new Error("glideClick: the target has no bounding box (is it visible?)");
+		throw new Error("glideTo: the target has no bounding box (is it visible?)");
 	}
 	const target = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 
-	let from = lastMousePosition.get(page);
+	// The page's own record sees every mouse move (including the script's own page.mouse.move and
+	// locator.click calls); the helper's memory only knows its own glides.
+	let from = (await readPageMousePosition(page)) || lastMousePosition.get(page);
 	if (!from) {
 		from = await page.evaluate(() => ({
 			x: window.innerWidth / 2,
@@ -528,9 +584,38 @@ async function glideClick(page, locator, { durationMs = 600, pauseMs = 120 } = {
 	lastMousePosition.set(page, target);
 
 	await sleep(pauseMs);
+	return { x: target.x, y: target.y };
+}
+
+/** glideTo, then a left click at the point it ended on. */
+async function glideClick(page, locator, options = {}) {
+	await glideTo(page, locator, options);
 	await page.mouse.down({ button: "left" });
 	await sleep(40);
 	await page.mouse.up({ button: "left" });
+}
+
+// --- App window --------------------------------------------------------------------------------
+
+/**
+ * Finds the page of a Chrome `--app=<url>` window in a persistent `context`: one already open at
+ * `url` (prefix match), else one that arrives within `timeoutMs` (default 5000); failing both,
+ * navigates the first page (or a new one) to `url`. The page is brought to the front.
+ */
+async function openAppPage(context, url, { timeoutMs = 5000 } = {}) {
+	const isAppPage = (page) => page.url().startsWith(url);
+	let page = context.pages().find(isAppPage);
+	if (!page) {
+		page = await context
+			.waitForEvent("page", { predicate: isAppPage, timeout: timeoutMs })
+			.catch(() => undefined);
+	}
+	if (!page) {
+		page = context.pages()[0] || (await context.newPage());
+		await page.goto(url);
+	}
+	await page.bringToFront();
+	return page;
 }
 
 // --- Client ------------------------------------------------------------------------------------
@@ -592,6 +677,8 @@ module.exports = {
 	resolveControlFile,
 	connect,
 	glideClick,
+	glideTo,
+	openAppPage,
 	pageEventToScreen,
 	sizeWindowForViewport,
 };

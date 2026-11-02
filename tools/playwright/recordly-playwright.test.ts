@@ -58,6 +58,17 @@ interface Helper {
 		page: unknown,
 		size: { width: number; height: number },
 	): Promise<{ width: number; height: number }>;
+	glideClick(
+		page: unknown,
+		locator: unknown,
+		options?: { durationMs?: number; pauseMs?: number },
+	): Promise<void>;
+	glideTo(
+		page: unknown,
+		locator: unknown,
+		options?: { durationMs?: number; pauseMs?: number },
+	): Promise<{ x: number; y: number }>;
+	openAppPage(context: unknown, url: string, options?: { timeoutMs?: number }): Promise<unknown>;
 }
 
 const helper = require("./recordly-playwright.cjs") as Helper;
@@ -377,19 +388,28 @@ describe("control client", () => {
 		interface FakeContext {
 			bindings: Map<string, (source: unknown, raw: unknown) => unknown>;
 			initScripts: unknown[];
+			initArgs: unknown[];
+			exposeCalls: number;
 		}
 
 		function fakePage(): { page: unknown; context: FakeContext } {
-			const context: FakeContext = { bindings: new Map(), initScripts: [] };
+			const context: FakeContext = {
+				bindings: new Map(),
+				initScripts: [],
+				initArgs: [],
+				exposeCalls: 0,
+			};
 			const fakeContext = {
 				exposeBinding: async (
 					name: string,
 					fn: (source: unknown, raw: unknown) => unknown,
 				) => {
+					context.exposeCalls += 1;
 					context.bindings.set(name, fn);
 				},
-				addInitScript: async (script: unknown) => {
+				addInitScript: async (script: unknown, arg?: unknown) => {
 					context.initScripts.push(script);
+					context.initArgs.push(arg);
 				},
 				pages: () => [],
 			};
@@ -484,6 +504,90 @@ describe("control client", () => {
 				body: { error: { code: "internal", message: "boom" } },
 			});
 			await expect(cursor.detach()).rejects.toThrow("internal: boom");
+		});
+
+		it("exposes one binding and one init script per context across attach/detach cycles", async () => {
+			const control = await startFakeServer();
+			respond = (req) => ({
+				status: 200,
+				body:
+					req.url === "/v1/cursor-events"
+						? {
+								accepted: (req.body as { events: unknown[] }).events.length,
+								rejected: [],
+							}
+						: {},
+			});
+			const client = await helper.connect({ control });
+			const { page, context } = fakePage();
+
+			const first = await client.attachCursor(page, { flushMs: 60_000 });
+			const [binding] = [...context.bindings.values()];
+			await binding({}, rawEvent({ atMs: 1000 }));
+			await first.detach();
+
+			const second = await client.attachCursor(page, { offsetX: 5, flushMs: 60_000 });
+			expect(context.exposeCalls).toBe(1);
+			expect(context.bindings.size).toBe(1);
+			expect(context.initScripts).toHaveLength(1);
+
+			await binding({}, rawEvent({ atMs: 2000 }));
+			await second.flush();
+
+			expect(first.stats()).toMatchObject({ sent: 1 });
+			expect(second.stats()).toMatchObject({ sent: 1 });
+			const posts = requests.filter((req) => req.url === "/v1/cursor-events");
+			const events = posts.flatMap((req) => (req.body as { events: unknown[] }).events);
+			expect(events).toEqual([
+				{ atMs: 1000, x: 118, y: 192, kind: "move", cursor: "pointer" },
+				{ atMs: 2000, x: 123, y: 192, kind: "move", cursor: "pointer" },
+			]);
+			await second.detach();
+		});
+
+		it("gives each context its own binding", async () => {
+			const control = await startFakeServer();
+			const client = await helper.connect({ control });
+			const a = fakePage();
+			const b = fakePage();
+			const cursorA = await client.attachCursor(a.page, { flushMs: 60_000 });
+			const cursorB = await client.attachCursor(b.page, { flushMs: 60_000 });
+			expect(a.context.bindings.size).toBe(1);
+			expect(b.context.bindings.size).toBe(1);
+			await cursorA.detach();
+			await cursorB.detach();
+		});
+
+		it("keeps the in-page last position current even when no session is attached", async () => {
+			const control = await startFakeServer();
+			const client = await helper.connect({ control });
+			const { page, context } = fakePage();
+			const cursor = await client.attachCursor(page, { flushMs: 60_000 });
+			await cursor.detach();
+
+			const handlers = new Map<string, (event: unknown) => void>();
+			const fakeWindow: Record<string, unknown> = {
+				screenX: 0,
+				screenY: 0,
+				outerWidth: 1,
+				innerWidth: 1,
+				outerHeight: 1,
+				innerHeight: 1,
+				addEventListener: (name: string, fn: (event: unknown) => void) => {
+					handlers.set(name, fn);
+				},
+			};
+			fakeWindow.top = fakeWindow;
+			const globals = globalThis as Record<string, unknown>;
+			globals.window = fakeWindow;
+			try {
+				(context.initScripts[0] as (name: string) => void)(context.initArgs[0] as string);
+				handlers.get("mousemove")?.({ clientX: 33, clientY: 44, target: null });
+				handlers.get("mousedown")?.({ clientX: 55, clientY: 66, button: 0, target: null });
+				expect(fakeWindow.__recordlyLastMouse).toEqual({ x: 55, y: 66 });
+			} finally {
+				delete globals.window;
+			}
 		});
 
 		it("ignores events that arrive after detach", async () => {
@@ -641,5 +745,205 @@ describe("sizeWindowForViewport", () => {
 		await expect(
 			helper.sizeWindowForViewport(page, { width: 1440, height: 900 }),
 		).rejects.toThrow(/got 1490×900\); the display may be too small/);
+	});
+});
+
+describe("glideClick start point", () => {
+	function fakeGlidePage(lastMouse: { x: number; y: number } | undefined) {
+		const moves: Array<{ x: number; y: number }> = [];
+		const buttons: string[] = [];
+		const page = {
+			mouse: {
+				move: async (x: number, y: number) => {
+					moves.push({ x, y });
+				},
+				down: async () => {
+					buttons.push("down");
+				},
+				up: async () => {
+					buttons.push("up");
+				},
+			},
+			evaluate: async (fn: () => unknown) => fn(),
+		};
+		setPageWindow(lastMouse);
+		return { page, moves, buttons };
+	}
+
+	function setPageWindow(lastMouse: { x: number; y: number } | undefined) {
+		(globalThis as Record<string, unknown>).window = {
+			innerWidth: 800,
+			innerHeight: 600,
+			...(lastMouse ? { __recordlyLastMouse: lastMouse } : {}),
+		};
+	}
+
+	const locator = {
+		scrollIntoViewIfNeeded: async () => undefined,
+		boundingBox: async () => ({ x: 600, y: 400, width: 100, height: 40 }),
+	};
+	const options = { durationMs: 160, pauseMs: 0 };
+
+	afterEach(() => {
+		delete (globalThis as Record<string, unknown>).window;
+	});
+
+	it("starts from the position the page last saw the mouse at", async () => {
+		const { page, moves, buttons } = fakeGlidePage({ x: 50, y: 60 });
+		await helper.glideClick(page, locator, options);
+		expect(Math.abs(moves[0].x - 50)).toBeLessThan(5);
+		expect(Math.abs(moves[0].y - 60)).toBeLessThan(5);
+		expect(moves.at(-1)).toEqual({ x: 650, y: 420 });
+		expect(buttons).toEqual(["down", "up"]);
+	});
+
+	it("follows mouse moves made outside glideClick between glides", async () => {
+		const { page, moves } = fakeGlidePage({ x: 50, y: 60 });
+		await helper.glideClick(page, locator, options);
+		// The script moves the mouse itself: the page record changes, glideClick's own memory is stale.
+		setPageWindow({ x: 300, y: 200 });
+		moves.length = 0;
+		await helper.glideClick(page, locator, options);
+		expect(Math.abs(moves[0].x - 300)).toBeLessThan(5);
+		expect(Math.abs(moves[0].y - 200)).toBeLessThan(5);
+	});
+
+	it("falls back to glideClick's own last target, then to the page centre", async () => {
+		const { page, moves } = fakeGlidePage(undefined);
+		await helper.glideClick(page, locator, options);
+		// Nothing recorded by the page and nothing remembered: starts at the centre (400, 300).
+		expect(moves[0]).toEqual({ x: 400, y: 300 });
+		expect(Math.abs(moves[1].x - 400)).toBeLessThan(2);
+
+		moves.length = 0;
+		await helper.glideClick(page, locator, options);
+		// Now glideClick remembers its previous target (650, 420).
+		expect(Math.abs(moves[0].x - 650)).toBeLessThan(2);
+		expect(Math.abs(moves[0].y - 420)).toBeLessThan(2);
+	});
+});
+
+describe("glideTo", () => {
+	it("glides to the target centre without clicking and returns the end point", async () => {
+		const moves: Array<{ x: number; y: number }> = [];
+		const buttons: string[] = [];
+		const page = {
+			mouse: {
+				move: async (x: number, y: number) => {
+					moves.push({ x, y });
+				},
+				down: async () => {
+					buttons.push("down");
+				},
+				up: async () => {
+					buttons.push("up");
+				},
+			},
+			evaluate: async (fn: () => unknown) => fn(),
+		};
+		(globalThis as Record<string, unknown>).window = {
+			innerWidth: 800,
+			innerHeight: 600,
+			__recordlyLastMouse: { x: 50, y: 60 },
+		};
+		try {
+			const locator = {
+				scrollIntoViewIfNeeded: async () => undefined,
+				boundingBox: async () => ({ x: 600, y: 400, width: 100, height: 40 }),
+			};
+			const end = await helper.glideTo(page, locator, { durationMs: 160, pauseMs: 0 });
+			expect(end).toEqual({ x: 650, y: 420 });
+			expect(Math.abs(moves[0].x - 50)).toBeLessThan(5);
+			expect(moves.length).toBeGreaterThan(2);
+			expect(moves.at(-1)).toEqual({ x: 650, y: 420 });
+			expect(buttons).toEqual([]);
+		} finally {
+			delete (globalThis as Record<string, unknown>).window;
+		}
+	});
+
+	it("throws when the target has no bounding box", async () => {
+		const locator = {
+			scrollIntoViewIfNeeded: async () => undefined,
+			boundingBox: async () => null,
+		};
+		await expect(helper.glideTo({}, locator)).rejects.toThrow(/no bounding box/);
+	});
+});
+
+describe("openAppPage", () => {
+	interface FakePage {
+		url(): string;
+		goto: ReturnType<typeof vi.fn>;
+		bringToFront: ReturnType<typeof vi.fn>;
+	}
+
+	function fakePageAt(url: string): FakePage {
+		return {
+			url: () => url,
+			goto: vi.fn(async () => undefined),
+			bringToFront: vi.fn(async () => undefined),
+		};
+	}
+
+	const appUrl = "file:///C:/orca/index.html";
+
+	it("returns the app page that is already open and brings it to the front", async () => {
+		const blank = fakePageAt("about:blank");
+		const app = fakePageAt(`${appUrl}#home`);
+		const waitForEvent = vi.fn();
+		const context = { pages: () => [blank, app], waitForEvent, newPage: vi.fn() };
+		await expect(helper.openAppPage(context, appUrl)).resolves.toBe(app);
+		expect(waitForEvent).not.toHaveBeenCalled();
+		expect(app.bringToFront).toHaveBeenCalled();
+		expect(app.goto).not.toHaveBeenCalled();
+	});
+
+	it("waits for the app page to arrive via the page event", async () => {
+		const arriving = fakePageAt(appUrl);
+		const waitForEvent = vi.fn(async (_name: string, _opts: unknown) => arriving);
+		const context = { pages: () => [], waitForEvent, newPage: vi.fn() };
+		await expect(helper.openAppPage(context, appUrl, { timeoutMs: 1234 })).resolves.toBe(
+			arriving,
+		);
+		expect(waitForEvent).toHaveBeenCalledWith(
+			"page",
+			expect.objectContaining({ timeout: 1234 }),
+		);
+		const { predicate } = waitForEvent.mock.calls[0][1] as {
+			predicate: (page: FakePage) => boolean;
+		};
+		expect(predicate(arriving)).toBe(true);
+		expect(predicate(fakePageAt("about:blank"))).toBe(false);
+		expect(arriving.goto).not.toHaveBeenCalled();
+		expect(arriving.bringToFront).toHaveBeenCalled();
+	});
+
+	it("navigates the first page to the url when no app page shows up", async () => {
+		const blank = fakePageAt("about:blank");
+		const context = {
+			pages: () => [blank],
+			waitForEvent: vi.fn(async () => {
+				throw new Error("Timeout");
+			}),
+			newPage: vi.fn(),
+		};
+		await expect(helper.openAppPage(context, appUrl)).resolves.toBe(blank);
+		expect(blank.goto).toHaveBeenCalledWith(appUrl);
+		expect(blank.bringToFront).toHaveBeenCalled();
+		expect(context.newPage).not.toHaveBeenCalled();
+	});
+
+	it("opens a new page to navigate when the context has none", async () => {
+		const created = fakePageAt("about:blank");
+		const context = {
+			pages: () => [],
+			waitForEvent: vi.fn(async () => {
+				throw new Error("Timeout");
+			}),
+			newPage: vi.fn(async () => created),
+		};
+		await expect(helper.openAppPage(context, appUrl)).resolves.toBe(created);
+		expect(created.goto).toHaveBeenCalledWith(appUrl);
 	});
 });
