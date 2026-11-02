@@ -23,7 +23,7 @@ const SOURCE_LIST_CACHE_TTL_MS = 1200;
 let sourceListCache: {
 	key: string;
 	expiresAt: number;
-	value: Array<Record<string, unknown>>;
+	value: Array<SelectedSource & { thumbnail: string | null }>;
 } | null = null;
 
 function normalizeDesktopSourceName(value: string) {
@@ -38,6 +38,286 @@ function broadcastSelectedSourceChange() {
 	}
 }
 
+export interface ListCaptureSourcesOptions {
+	types?: Array<"screen" | "window">;
+	forceRefresh?: boolean;
+	thumbnailSize?: { width: number; height: number };
+	fetchWindowIcons?: boolean;
+}
+
+export async function listCaptureSources(
+	opts?: ListCaptureSourcesOptions,
+): Promise<Array<SelectedSource & { thumbnail: string | null }>> {
+	const { forceRefresh = false, ...captureOptions } = opts ?? {};
+	const cacheKey = JSON.stringify({
+		types: captureOptions.types,
+		thumbnailSize: captureOptions.thumbnailSize,
+		fetchWindowIcons: captureOptions.fetchWindowIcons,
+	});
+	if (
+		!forceRefresh &&
+		sourceListCache &&
+		sourceListCache.key === cacheKey &&
+		sourceListCache.expiresAt > Date.now()
+	) {
+		return sourceListCache.value;
+	}
+
+	const includeScreens = Array.isArray(captureOptions.types)
+		? captureOptions.types.includes("screen")
+		: true;
+	const includeWindows = Array.isArray(captureOptions.types)
+		? captureOptions.types.includes("window")
+		: true;
+	const includeWindowIcons = Boolean(captureOptions.fetchWindowIcons);
+	const electronTypes = [
+		...(includeScreens ? ["screen" as const] : []),
+		...(includeWindows ? ["window" as const] : []),
+	];
+	const electronSources =
+		electronTypes.length > 0
+			? await desktopCapturer
+					.getSources({
+						...captureOptions,
+						types: electronTypes,
+					})
+					.catch((error) => {
+						console.warn(
+							"desktopCapturer.getSources failed (screen recording permission may be missing):",
+							error,
+						);
+						return [];
+					})
+			: [];
+	const ownWindowNames = new Set(
+		[
+			app.getName(),
+			"Recordly",
+			...BrowserWindow.getAllWindows().flatMap((win) => {
+				const title = win.getTitle().trim();
+				return title ? [title] : [];
+			}),
+		]
+			.map((name) => normalizeDesktopSourceName(name))
+			.filter(Boolean),
+	);
+	const ownAppName = normalizeDesktopSourceName(app.getName());
+
+	const displays = includeScreens
+		? [...getScreen().getAllDisplays()].sort(
+				(left, right) =>
+					left.bounds.x - right.bounds.x ||
+					left.bounds.y - right.bounds.y ||
+					left.id - right.id,
+			)
+		: [];
+	const primaryDisplayId = includeScreens ? String(getScreen().getPrimaryDisplay().id) : "";
+	const electronScreenSourcesByDisplayId = new Map(
+		electronSources
+			.filter((source) => source.id.startsWith("screen:"))
+			.map((source) => [String(source.display_id ?? ""), source] as const),
+	);
+	// On Linux, desktopCapturer display_id values may not match screen.getAllDisplays() IDs.
+	// Keep an ordered list so we can fall back to position-based matching.
+	const electronScreenSourcesByIndex = electronSources.filter((source) =>
+		source.id.startsWith("screen:"),
+	);
+
+	const screenSources = displays.map((display, index) => {
+		const displayId = String(display.id);
+		const matchedSource =
+			electronScreenSourcesByDisplayId.get(displayId) ??
+			(electronScreenSourcesByIndex.length === displays.length
+				? electronScreenSourcesByIndex[index]
+				: undefined);
+		const displayName =
+			displayId === primaryDisplayId
+				? `Screen ${index + 1} (Primary)`
+				: `Screen ${index + 1}`;
+
+		return {
+			id: getScreenSourceIdForDisplay({
+				displayId,
+				env: process.env,
+				matchedSourceId: matchedSource?.id,
+				platform: process.platform,
+			}),
+			name: displayName,
+			originalName: matchedSource?.name ?? displayName,
+			display_id: displayId,
+			thumbnail: matchedSource?.thumbnail ? matchedSource.thumbnail.toDataURL() : null,
+			appIcon: null,
+			sourceType: "screen" as const,
+		};
+	});
+
+	if (process.platform !== "darwin" || !includeWindows) {
+		const windowSources = electronSources
+			.filter((source) => source.id.startsWith("window:"))
+			.filter((source) => {
+				const normalizedName = normalizeDesktopSourceName(source.name);
+				if (!normalizedName) {
+					return true;
+				}
+
+				if (ALLOW_RECORDLY_WINDOW_CAPTURE && normalizedName.includes("recordly")) {
+					return true;
+				}
+
+				for (const ownName of ownWindowNames) {
+					if (!ownName) continue;
+					if (normalizedName === ownName) {
+						return false;
+					}
+				}
+
+				return true;
+			})
+			.map((source) => ({
+				id: source.id,
+				name: source.name,
+				originalName: source.name,
+				display_id: source.display_id,
+				thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
+				appIcon: includeWindowIcons && source.appIcon ? source.appIcon.toDataURL() : null,
+				sourceType: "window" as const,
+			}));
+		const result = [...screenSources, ...windowSources];
+		sourceListCache = {
+			key: cacheKey,
+			expiresAt: Date.now() + SOURCE_LIST_CACHE_TTL_MS,
+			value: result,
+		};
+		return result;
+	}
+
+	try {
+		const nativeWindowSources = await getNativeMacWindowSources();
+		const electronWindowSourceMap = new Map(
+			electronSources
+				.filter((source) => source.id.startsWith("window:"))
+				.map((source) => [source.id, source] as const),
+		);
+
+		const mergedWindowSources = nativeWindowSources
+			.filter((source) => {
+				const normalizedWindowName = normalizeDesktopSourceName(
+					source.windowTitle ?? source.name,
+				);
+				const normalizedAppName = normalizeDesktopSourceName(source.appName ?? "");
+
+				if (
+					!ALLOW_RECORDLY_WINDOW_CAPTURE &&
+					normalizedAppName &&
+					normalizedAppName === ownAppName
+				) {
+					return false;
+				}
+
+				if (
+					ALLOW_RECORDLY_WINDOW_CAPTURE &&
+					(normalizedAppName === "recordly" || normalizedWindowName?.includes("recordly"))
+				) {
+					return true;
+				}
+
+				if (!normalizedWindowName) {
+					return true;
+				}
+
+				for (const ownName of ownWindowNames) {
+					if (!ownName) continue;
+					if (normalizedWindowName === ownName) {
+						return false;
+					}
+				}
+
+				return true;
+			})
+			.map((source) => {
+				const electronWindowSource = electronWindowSourceMap.get(source.id);
+				return {
+					id: source.id,
+					name: source.name,
+					originalName: source.name,
+					display_id: source.display_id ?? electronWindowSource?.display_id ?? "",
+					thumbnail: electronWindowSource?.thumbnail
+						? electronWindowSource.thumbnail.toDataURL()
+						: null,
+					appIcon: includeWindowIcons
+						? (source.appIcon ??
+							(electronWindowSource?.appIcon
+								? electronWindowSource.appIcon.toDataURL()
+								: null))
+						: null,
+					appName: source.appName,
+					windowTitle: source.windowTitle,
+					sourceType: "window" as const,
+				};
+			});
+
+		const result = [...screenSources, ...mergedWindowSources];
+		sourceListCache = {
+			key: cacheKey,
+			expiresAt: Date.now() + SOURCE_LIST_CACHE_TTL_MS,
+			value: result,
+		};
+		return result;
+	} catch (error) {
+		console.warn("Falling back to Electron window enumeration on macOS:", error);
+
+		const windowSources = electronSources
+			.filter((source) => source.id.startsWith("window:"))
+			.filter((source) => {
+				const normalizedName = normalizeDesktopSourceName(source.name);
+				if (!normalizedName) {
+					return true;
+				}
+
+				if (ALLOW_RECORDLY_WINDOW_CAPTURE && normalizedName.includes("recordly")) {
+					return true;
+				}
+
+				for (const ownName of ownWindowNames) {
+					if (!ownName) continue;
+					if (
+						normalizedName === ownName ||
+						normalizedName.includes(ownName) ||
+						ownName.includes(normalizedName)
+					) {
+						return false;
+					}
+				}
+
+				return true;
+			})
+			.map((source) => ({
+				id: source.id,
+				name: source.name,
+				originalName: source.name,
+				display_id: source.display_id,
+				thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
+				appIcon: includeWindowIcons && source.appIcon ? source.appIcon.toDataURL() : null,
+				sourceType: "window" as const,
+			}));
+
+		const result = [...screenSources, ...windowSources];
+		sourceListCache = {
+			key: cacheKey,
+			expiresAt: Date.now() + SOURCE_LIST_CACHE_TTL_MS,
+			value: result,
+		};
+		return result;
+	}
+}
+
+export function applySelectedSource(source: SelectedSource): SelectedSource | null {
+	setSelectedSource(source);
+	broadcastSelectedSourceChange();
+	stopWindowBoundsCapture();
+	return selectedSource;
+}
+
 export function registerSourceHandlers({
 	createEditorWindow,
 	createSourceSelectorWindow,
@@ -47,282 +327,15 @@ export function registerSourceHandlers({
 	createSourceSelectorWindow: () => BrowserWindow;
 	getSourceSelectorWindow: () => BrowserWindow | null;
 }) {
-	ipcMain.handle("get-sources", async (_, opts) => {
-		const { forceRefresh = false, ...captureOptions } = opts ?? {};
-		const cacheKey = JSON.stringify({
-			types: captureOptions.types,
-			thumbnailSize: captureOptions.thumbnailSize,
-			fetchWindowIcons: captureOptions.fetchWindowIcons,
-		});
-		if (
-			!forceRefresh &&
-			sourceListCache &&
-			sourceListCache.key === cacheKey &&
-			sourceListCache.expiresAt > Date.now()
-		) {
-			return sourceListCache.value;
-		}
-
-		const includeScreens = Array.isArray(captureOptions.types)
-			? captureOptions.types.includes("screen")
-			: true;
-		const includeWindows = Array.isArray(captureOptions.types)
-			? captureOptions.types.includes("window")
-			: true;
-		const includeWindowIcons = Boolean(captureOptions.fetchWindowIcons);
-		const electronTypes = [
-			...(includeScreens ? ["screen" as const] : []),
-			...(includeWindows ? ["window" as const] : []),
-		];
-		const electronSources =
-			electronTypes.length > 0
-				? await desktopCapturer
-						.getSources({
-							...captureOptions,
-							types: electronTypes,
-						})
-						.catch((error) => {
-							console.warn(
-								"desktopCapturer.getSources failed (screen recording permission may be missing):",
-								error,
-							);
-							return [];
-						})
-				: [];
-		const ownWindowNames = new Set(
-			[
-				app.getName(),
-				"Recordly",
-				...BrowserWindow.getAllWindows().flatMap((win) => {
-					const title = win.getTitle().trim();
-					return title ? [title] : [];
-				}),
-			]
-				.map((name) => normalizeDesktopSourceName(name))
-				.filter(Boolean),
-		);
-		const ownAppName = normalizeDesktopSourceName(app.getName());
-
-		const displays = includeScreens
-			? [...getScreen().getAllDisplays()].sort(
-					(left, right) =>
-						left.bounds.x - right.bounds.x ||
-						left.bounds.y - right.bounds.y ||
-						left.id - right.id,
-				)
-			: [];
-		const primaryDisplayId = includeScreens ? String(getScreen().getPrimaryDisplay().id) : "";
-		const electronScreenSourcesByDisplayId = new Map(
-			electronSources
-				.filter((source) => source.id.startsWith("screen:"))
-				.map((source) => [String(source.display_id ?? ""), source] as const),
-		);
-		// On Linux, desktopCapturer display_id values may not match screen.getAllDisplays() IDs.
-		// Keep an ordered list so we can fall back to position-based matching.
-		const electronScreenSourcesByIndex = electronSources.filter((source) =>
-			source.id.startsWith("screen:"),
-		);
-
-		const screenSources = displays.map((display, index) => {
-			const displayId = String(display.id);
-			const matchedSource =
-				electronScreenSourcesByDisplayId.get(displayId) ??
-				(electronScreenSourcesByIndex.length === displays.length
-					? electronScreenSourcesByIndex[index]
-					: undefined);
-			const displayName =
-				displayId === primaryDisplayId
-					? `Screen ${index + 1} (Primary)`
-					: `Screen ${index + 1}`;
-
-			return {
-				id: getScreenSourceIdForDisplay({
-					displayId,
-					env: process.env,
-					matchedSourceId: matchedSource?.id,
-					platform: process.platform,
-				}),
-				name: displayName,
-				originalName: matchedSource?.name ?? displayName,
-				display_id: displayId,
-				thumbnail: matchedSource?.thumbnail ? matchedSource.thumbnail.toDataURL() : null,
-				appIcon: null,
-				sourceType: "screen" as const,
-			};
-		});
-
-		if (process.platform !== "darwin" || !includeWindows) {
-			const windowSources = electronSources
-				.filter((source) => source.id.startsWith("window:"))
-				.filter((source) => {
-					const normalizedName = normalizeDesktopSourceName(source.name);
-					if (!normalizedName) {
-						return true;
-					}
-
-					if (ALLOW_RECORDLY_WINDOW_CAPTURE && normalizedName.includes("recordly")) {
-						return true;
-					}
-
-					for (const ownName of ownWindowNames) {
-						if (!ownName) continue;
-						if (normalizedName === ownName) {
-							return false;
-						}
-					}
-
-					return true;
-				})
-				.map((source) => ({
-					id: source.id,
-					name: source.name,
-					originalName: source.name,
-					display_id: source.display_id,
-					thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
-					appIcon:
-						includeWindowIcons && source.appIcon ? source.appIcon.toDataURL() : null,
-					sourceType: "window" as const,
-				}));
-			const result = [...screenSources, ...windowSources];
-			sourceListCache = {
-				key: cacheKey,
-				expiresAt: Date.now() + SOURCE_LIST_CACHE_TTL_MS,
-				value: result,
-			};
-			return result;
-		}
-
-		try {
-			const nativeWindowSources = await getNativeMacWindowSources();
-			const electronWindowSourceMap = new Map(
-				electronSources
-					.filter((source) => source.id.startsWith("window:"))
-					.map((source) => [source.id, source] as const),
-			);
-
-			const mergedWindowSources = nativeWindowSources
-				.filter((source) => {
-					const normalizedWindowName = normalizeDesktopSourceName(
-						source.windowTitle ?? source.name,
-					);
-					const normalizedAppName = normalizeDesktopSourceName(source.appName ?? "");
-
-					if (
-						!ALLOW_RECORDLY_WINDOW_CAPTURE &&
-						normalizedAppName &&
-						normalizedAppName === ownAppName
-					) {
-						return false;
-					}
-
-					if (
-						ALLOW_RECORDLY_WINDOW_CAPTURE &&
-						(normalizedAppName === "recordly" ||
-							normalizedWindowName?.includes("recordly"))
-					) {
-						return true;
-					}
-
-					if (!normalizedWindowName) {
-						return true;
-					}
-
-					for (const ownName of ownWindowNames) {
-						if (!ownName) continue;
-						if (normalizedWindowName === ownName) {
-							return false;
-						}
-					}
-
-					return true;
-				})
-				.map((source) => {
-					const electronWindowSource = electronWindowSourceMap.get(source.id);
-					return {
-						id: source.id,
-						name: source.name,
-						originalName: source.name,
-						display_id: source.display_id ?? electronWindowSource?.display_id ?? "",
-						thumbnail: electronWindowSource?.thumbnail
-							? electronWindowSource.thumbnail.toDataURL()
-							: null,
-						appIcon: includeWindowIcons
-							? (source.appIcon ??
-								(electronWindowSource?.appIcon
-									? electronWindowSource.appIcon.toDataURL()
-									: null))
-							: null,
-						appName: source.appName,
-						windowTitle: source.windowTitle,
-						sourceType: "window" as const,
-					};
-				});
-
-			const result = [...screenSources, ...mergedWindowSources];
-			sourceListCache = {
-				key: cacheKey,
-				expiresAt: Date.now() + SOURCE_LIST_CACHE_TTL_MS,
-				value: result,
-			};
-			return result;
-		} catch (error) {
-			console.warn("Falling back to Electron window enumeration on macOS:", error);
-
-			const windowSources = electronSources
-				.filter((source) => source.id.startsWith("window:"))
-				.filter((source) => {
-					const normalizedName = normalizeDesktopSourceName(source.name);
-					if (!normalizedName) {
-						return true;
-					}
-
-					if (ALLOW_RECORDLY_WINDOW_CAPTURE && normalizedName.includes("recordly")) {
-						return true;
-					}
-
-					for (const ownName of ownWindowNames) {
-						if (!ownName) continue;
-						if (
-							normalizedName === ownName ||
-							normalizedName.includes(ownName) ||
-							ownName.includes(normalizedName)
-						) {
-							return false;
-						}
-					}
-
-					return true;
-				})
-				.map((source) => ({
-					id: source.id,
-					name: source.name,
-					originalName: source.name,
-					display_id: source.display_id,
-					thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
-					appIcon:
-						includeWindowIcons && source.appIcon ? source.appIcon.toDataURL() : null,
-					sourceType: "window" as const,
-				}));
-
-			const result = [...screenSources, ...windowSources];
-			sourceListCache = {
-				key: cacheKey,
-				expiresAt: Date.now() + SOURCE_LIST_CACHE_TTL_MS,
-				value: result,
-			};
-			return result;
-		}
-	});
+	ipcMain.handle("get-sources", async (_, opts) => listCaptureSources(opts));
 
 	ipcMain.handle("select-source", (_, source: SelectedSource) => {
-		setSelectedSource(source);
-		broadcastSelectedSourceChange();
-		stopWindowBoundsCapture();
+		const applied = applySelectedSource(source);
 		const sourceSelectorWin = getSourceSelectorWindow();
 		if (sourceSelectorWin) {
 			sourceSelectorWin.close();
 		}
-		return selectedSource;
+		return applied;
 	});
 
 	ipcMain.handle("get-taskbar-crop-region", (_, requestedSource?: SelectedSource | null) => {
