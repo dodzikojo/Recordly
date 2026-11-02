@@ -1,7 +1,8 @@
 # Recordly Playwright helper
 
 Lets a Playwright script drive an agent-cursor take in Recordly: Recordly ignores the real
-mouse and draws its cursor from the events this helper posts to the local control server.
+mouse and draws its cursor from the events this helper posts to the local control server. Setup, security rules and gotchas are in the
+"Local control server" section of the repo-root `AGENTS.md`.
 
 ## Install
 
