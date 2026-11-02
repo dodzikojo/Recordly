@@ -12,9 +12,17 @@ import {
 	shell,
 	systemPreferences,
 } from "electron";
+import { controlEvents } from "../../control/controlEvents";
 import { showCursor } from "../../cursorHider";
 import { getMonitorHandles } from "../monitorResolver";
 import { ALLOW_RECORDLY_WINDOW_CAPTURE } from "../constants";
+import {
+	clearNativeCaptureStart,
+	markNativeCapturePaused,
+	markNativeCaptureResumed,
+	markNativeCaptureStarted,
+	resolveCursorClockStartMs,
+} from "../cursor/agentCursor";
 import { startWindowBoundsCapture, stopWindowBoundsCapture } from "../cursor/bounds";
 import { startInteractionCapture, stopInteractionCapture } from "../cursor/interaction";
 import { startNativeCursorMonitor, stopNativeCursorMonitor } from "../cursor/monitor";
@@ -82,6 +90,7 @@ import {
 	shouldUseWindowsBrowserMicrophoneFallback,
 } from "../recording/windowsFallbacks";
 import {
+	agentCursorTakeActive,
 	cachedSystemCursorAssets,
 	cachedSystemCursorAssetsSourceMtimeMs,
 	currentVideoPath,
@@ -99,6 +108,7 @@ import {
 	nativeScreenRecordingActive,
 	selectedSource,
 	setActiveCursorSamples,
+	setAgentCursorTakeActive,
 	setCachedSystemCursorAssets,
 	setCachedSystemCursorAssetsSourceMtimeMs,
 	setCursorCaptureStartTimeMs,
@@ -107,6 +117,7 @@ import {
 	setFfmpegCaptureTargetPath,
 	setFfmpegScreenRecordingActive,
 	setIsCursorCaptureActive,
+	setLastAgentCursorEventAtMs,
 	setLastLeftClick,
 	setLinuxCursorScreenPoint,
 	setNativeCaptureMicrophonePath,
@@ -398,6 +409,9 @@ export function registerRecordingHandlers(
 	ipcMain.handle(
 		"start-native-screen-recording",
 		async (_, source: SelectedSource, options?: NativeMacRecordingOptions) => {
+			// A stamp left by an earlier aborted start must not leak into this take (or into a
+			// browser-capture fallback after this attempt fails).
+			clearNativeCaptureStart();
 			// Windows native capture path
 			if (process.platform === "win32") {
 				const windowsCaptureAvailable = await isNativeWindowsCaptureAvailable();
@@ -566,6 +580,7 @@ export function registerRecordingHandlers(
 					});
 
 					await waitForWindowsCaptureStart(wcProc);
+					const captureStartedAtMs = Date.now();
 					const microphoneFallbackRequired =
 						browserMicFallbackRequested ||
 						shouldUseWindowsBrowserMicrophoneFallback(captureOutput, options);
@@ -592,6 +607,8 @@ export function registerRecordingHandlers(
 						microphonePath,
 						processOutput: captureOutput.trim() || undefined,
 					});
+					// Stamped only once the start can no longer fail.
+					markNativeCaptureStarted(captureStartedAtMs);
 					return { success: true, microphoneFallbackRequired };
 				} catch (error) {
 					recordNativeCaptureDiagnostics({
@@ -768,6 +785,7 @@ export function registerRecordingHandlers(
 				});
 
 				await waitForNativeCaptureStart(captProc);
+				const captureStartedAtMs = Date.now();
 				setNativeScreenRecordingActive(true);
 
 				// If the native helper reported MICROPHONE_CAPTURE_UNAVAILABLE, it started
@@ -792,6 +810,8 @@ export function registerRecordingHandlers(
 					microphonePath: nativeCaptureMicrophonePath,
 					processOutput: nativeCaptureOutputBuffer.trim() || undefined,
 				});
+				// Stamped only once the start can no longer fail.
+				markNativeCaptureStarted(captureStartedAtMs);
 				return { success: true, microphoneFallbackRequired: micUnavailableNatively };
 			} catch (error) {
 				console.error("Failed to start native ScreenCaptureKit recording:", error);
@@ -1280,6 +1300,7 @@ export function registerRecordingHandlers(
 			try {
 				windowsCaptureProcess.stdin.write("pause\n");
 				setWindowsCapturePaused(true);
+				markNativeCapturePaused(Date.now());
 				return { success: true };
 			} catch (error) {
 				return {
@@ -1310,9 +1331,11 @@ export function registerRecordingHandlers(
 				nativeCaptureProcess,
 				"Recording paused",
 			);
+			const pauseRequestedAtMs = Date.now();
 			nativeCaptureProcess.stdin.write("pause\n");
 			await commandApplied;
 			setNativeCapturePaused(true);
+			markNativeCapturePaused(pauseRequestedAtMs);
 			return { success: true };
 		} catch (error) {
 			return {
@@ -1336,6 +1359,7 @@ export function registerRecordingHandlers(
 			try {
 				windowsCaptureProcess.stdin.write("resume\n");
 				setWindowsCapturePaused(false);
+				markNativeCaptureResumed(Date.now());
 				return { success: true };
 			} catch (error) {
 				return {
@@ -1366,9 +1390,11 @@ export function registerRecordingHandlers(
 				nativeCaptureProcess,
 				"Recording resumed",
 			);
+			const resumeRequestedAtMs = Date.now();
 			nativeCaptureProcess.stdin.write("resume\n");
 			await commandApplied;
 			setNativeCapturePaused(false);
+			markNativeCaptureResumed(resumeRequestedAtMs);
 			return { success: true };
 		} catch (error) {
 			return {
@@ -1529,6 +1555,7 @@ export function registerRecordingHandlers(
 	});
 
 	ipcMain.handle("start-ffmpeg-recording", async (_, source: SelectedSource) => {
+		clearNativeCaptureStart();
 		if (ffmpegCaptureProcess) {
 			return { success: false, message: "An FFmpeg recording is already active." };
 		}
@@ -1555,6 +1582,7 @@ export function registerRecordingHandlers(
 			});
 
 			await waitForFfmpegCaptureStart(ffProc);
+			markNativeCaptureStarted(Date.now());
 			setFfmpegScreenRecordingActive(true);
 			return { success: true };
 		} catch (error) {
@@ -1827,17 +1855,29 @@ export function registerRecordingHandlers(
 			stopCursorCapture();
 			stopInteractionCapture();
 			startWindowBoundsCapture();
-			void startNativeCursorMonitor();
+			// Agent-driven takes ignore the real cursor: events arrive via ingestAgentCursorEvents.
+			if (!agentCursorTakeActive) {
+				void startNativeCursorMonitor();
+			}
 			setIsCursorCaptureActive(true);
 			setActiveCursorSamples([]);
 			setPendingCursorSamples([]);
-			setCursorCaptureStartTimeMs(Date.now());
+			// Agent-driven takes: the video's t=0 is the native helper's capture start (moved past any
+			// countdown pause), which precedes this call. Backdating the cursor clock to it keeps every
+			// elapsed-time reader (event stamps, pause boundary, resume) on the video's timeline.
+			// Human takes: Date.now(), unchanged.
+			setCursorCaptureStartTimeMs(
+				resolveCursorClockStartMs(Date.now(), agentCursorTakeActive),
+			);
 			resetCursorCaptureClock();
 			setLinuxCursorScreenPoint(null);
 			setLastLeftClick(null);
-			sampleCursorPoint();
-			startCursorSampling();
-			void startInteractionCapture();
+			setLastAgentCursorEventAtMs(null);
+			if (!agentCursorTakeActive) {
+				sampleCursorPoint();
+				startCursorSampling();
+				void startInteractionCapture();
+			}
 		} else {
 			setIsCursorCaptureActive(false);
 			stopCursorCapture();
@@ -1849,6 +1889,9 @@ export function registerRecordingHandlers(
 			resetCursorCaptureClock();
 			snapshotCursorTelemetryForPersistence();
 			setActiveCursorSamples([]);
+			setAgentCursorTakeActive(false);
+			setLastAgentCursorEventAtMs(null);
+			clearNativeCaptureStart();
 		}
 
 		const source = selectedSource || { name: "Screen" };
@@ -1864,6 +1907,13 @@ export function registerRecordingHandlers(
 		if (onRecordingStateChange) {
 			onRecordingStateChange(recording, source.name);
 		}
+
+		// The local control server tracks every take (human or controlled) from here.
+		try {
+			controlEvents.emit("recording-state", Boolean(recording));
+		} catch (error) {
+			console.warn("[control] recording-state listener failed:", error);
+		}
 	});
 
 	ipcMain.handle("pause-cursor-capture", (_, pausedAtMs?: unknown) => {
@@ -1873,7 +1923,9 @@ export function registerRecordingHandlers(
 
 	ipcMain.handle("resume-cursor-capture", (_, resumedAtMs?: unknown) => {
 		resumeCursorCapture(normalizeRendererTimestampMs(resumedAtMs));
-		sampleCursorPoint();
+		if (!agentCursorTakeActive) {
+			sampleCursorPoint();
+		}
 		return { success: true };
 	});
 

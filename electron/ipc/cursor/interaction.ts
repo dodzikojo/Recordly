@@ -13,6 +13,7 @@ import {
 } from "../state";
 import type {
 	CursorInteractionType,
+	CursorVisualType,
 	HookMouseEvent,
 	UiohookLike,
 	UiohookModuleNamespace,
@@ -197,7 +198,16 @@ export function recordCursorMouseDown(button: 1 | 2 | 3) {
 		return;
 	}
 
-	const timeMs = getCursorCaptureElapsedMs();
+	recordCursorDownAt(point, getCursorCaptureElapsedMs(), button);
+}
+
+/** Classifies a button press (click, double-click, right/middle click) and records it. */
+export function recordCursorDownAt(
+	point: { cx: number; cy: number },
+	timeMs: number,
+	button: 1 | 2 | 3,
+	cursorType?: CursorVisualType,
+) {
 	let interactionType: CursorInteractionType = "click";
 
 	if (button === 2) {
@@ -217,7 +227,7 @@ export function recordCursorMouseDown(button: 1 | 2 | 3) {
 		setLastLeftClick({ timeMs, cx: point.cx, cy: point.cy });
 	}
 
-	pushCursorSample(point.cx, point.cy, timeMs, interactionType);
+	pushCursorSample(point.cx, point.cy, timeMs, interactionType, cursorType);
 }
 
 export function recordCursorMouseUp() {
@@ -230,7 +240,15 @@ export function recordCursorMouseUp() {
 		return;
 	}
 
-	pushCursorSample(point.cx, point.cy, getCursorCaptureElapsedMs(), "mouseup");
+	recordCursorUpAt(point, getCursorCaptureElapsedMs());
+}
+
+export function recordCursorUpAt(
+	point: { cx: number; cy: number },
+	timeMs: number,
+	cursorType?: CursorVisualType,
+) {
+	pushCursorSample(point.cx, point.cy, timeMs, "mouseup", cursorType);
 }
 
 export async function startInteractionCapture() {

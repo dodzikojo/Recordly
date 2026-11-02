@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -17,6 +18,16 @@ import {
 	webContents as electronWebContents,
 } from "electron";
 import { RECORDINGS_DIR } from "./appPaths";
+import {
+	removeDiscoveryFileSync,
+	resolveControlConfig,
+	writeDiscoveryFile,
+} from "./control/config";
+import { createElectronControllerDeps } from "./control/electronBridge";
+import { type ControlServerHandle, startControlServer } from "./control/httpServer";
+import { waitForFinishingHudToClose } from "./control/hudFinalization";
+import { createMcpRequestHandler } from "./control/mcpServer";
+import { createRecordingController } from "./control/recordingController";
 import { showCursor } from "./cursorHider";
 import { registerExtensionIpcHandlers } from "./extensions/extensionIpc";
 import { getGpuSwitches } from "./gpuSwitches";
@@ -183,6 +194,10 @@ let isCreatingMainWindow = false;
 let isCreatingEditorWindow = false;
 let activeUpdateNotification: Notification | null = null;
 let activeUpdateNotificationKey: string | null = null;
+let controlServer: ControlServerHandle | null = null;
+let controlDiscoveryDir: string | null = null;
+// The HUD whose take last ended: it hides behind the editor and closes itself once finalized.
+let hudFinishingLastTake: BrowserWindow | null = null;
 const shouldEnforceSingleInstanceLock = !IS_DEV;
 const hasSingleInstanceLock = shouldEnforceSingleInstanceLock
 	? app.requestSingleInstanceLock()
@@ -893,6 +908,96 @@ function createSourceSelectorWindowWrapper() {
 	return sourceSelectorWindow;
 }
 
+/** Control server: the HUD exists, is shown and is mainWindow (so the tray's Stop reaches it). */
+async function ensureHudForControl(): Promise<void> {
+	let hud = getHudOverlayWindow();
+	if (hud && hud === hudFinishingLastTake && !hud.isVisible()) {
+		// After a stop the HUD hides behind the editor and closes itself (hud-overlay-close) once
+		// the take is finalized. Never start a take in it before then: wait up to 20 s for the
+		// close, else reject with a retryable conflict. Nothing has been closed at this point.
+		await waitForFinishingHudToClose(hud);
+		hud = getHudOverlayWindow();
+	}
+	if (!hud) {
+		// createWindow() only re-focuses mainWindow while it holds the editor.
+		if (mainWindow && !mainWindow.isDestroyed() && isEditorWindow(mainWindow)) {
+			mainWindow = null;
+		}
+		createWindow();
+		hud = getHudOverlayWindow();
+		if (!hud) {
+			throw new Error("the HUD window could not be created");
+		}
+	}
+	mainWindow = hud;
+	showHudOverlayFromTray();
+}
+
+/** Off unless RECORDLY_CONTROL=1 or --control; a failure to listen never blocks startup. */
+async function startControlServerIfEnabled(): Promise<void> {
+	const config = resolveControlConfig(process.env, process.argv);
+	if (!config.enabled) {
+		return;
+	}
+
+	let server: ControlServerHandle | null = null;
+	try {
+		const controller = createRecordingController(
+			createElectronControllerDeps({
+				getHudWindow: getHudOverlayWindow,
+				ensureHud: ensureHudForControl,
+				getEditorWindow: getExistingEditorWindow,
+				editorHasUnsavedChanges: () => editorHasUnsavedChanges,
+				closeEditorWithoutPrompt: closeEditorWindowBypassingUnsavedPrompt,
+			}),
+		);
+		const token = randomBytes(32).toString("hex");
+		server = await startControlServer({
+			port: config.port,
+			token,
+			controller,
+			mcpHandler: createMcpRequestHandler(controller),
+		});
+		const userDataDir = app.getPath("userData");
+		const file = await writeDiscoveryFile(userDataDir, {
+			port: server.port,
+			token,
+			pid: process.pid,
+		});
+		controlServer = server;
+		controlDiscoveryDir = userDataDir;
+		console.log(`[control] listening on http://127.0.0.1:${server.port} (token in ${file})`);
+	} catch (error) {
+		console.error(
+			"[control] Control server not started; Recordly carries on without it:",
+			error,
+		);
+		if (server) {
+			void server.close().catch(() => undefined);
+		}
+	}
+}
+
+function stopControlServer() {
+	const server = controlServer;
+	controlServer = null;
+	if (server) {
+		void server.close().catch((error) => console.warn("[control] close failed:", error));
+	}
+	const discoveryDir = controlDiscoveryDir;
+	controlDiscoveryDir = null;
+	if (discoveryDir) {
+		try {
+			removeDiscoveryFileSync(discoveryDir);
+		} catch (error) {
+			console.warn("[control] Failed to remove the discovery file:", error);
+		}
+	}
+}
+
+// Quit paths that skip will-quit (app.exit) still remove the token file.
+process.once("exit", stopControlServer);
+
 // On macOS, applications and their menu bar stay active until the user quits
 // explicitly with Cmd + Q.
 app.on("before-quit", () => {
@@ -901,6 +1006,10 @@ app.on("before-quit", () => {
 	cleanupNativeVideoExportSessions();
 	void cleanupAllExportStreams();
 });
+
+// will-quit, not before-quit: a window can still cancel the quit after before-quit (e.g. the
+// unsaved-changes prompt), and a cancelled quit must leave the control server running.
+app.on("will-quit", stopControlServer);
 
 app.on("window-all-closed", () => {
 	if (IS_SMOKE_EXPORT || process.platform !== "darwin") {
@@ -1041,6 +1150,7 @@ app.whenReady().then(async () => {
 		() => sourceSelectorWindow,
 		(recording: boolean, sourceName: string) => {
 			selectedSourceName = sourceName;
+			hudFinishingLastTake = recording ? null : getHudOverlayWindow();
 			setHudOverlayRecordingActive(recording);
 			if (shouldUseTray()) {
 				if (!tray) createTray();
@@ -1056,6 +1166,7 @@ app.whenReady().then(async () => {
 	);
 
 	registerExtensionIpcHandlers();
+	await startControlServerIfEnabled();
 
 	if (IS_SMOKE_EXPORT || process.env.RECORDLY_DEV_OPEN_RECORDING_INPUT) {
 		await logSmokeExportGpuDiagnostics();

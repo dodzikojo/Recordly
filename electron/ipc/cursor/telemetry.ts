@@ -182,6 +182,20 @@ export function getNormalizedCursorPoint() {
 		? { x: linuxCursorCache.x / primarySf, y: linuxCursorCache.y / primarySf }
 		: fallbackCursor;
 
+	return normalizeScreenPointToCapture(cursor);
+}
+
+/**
+ * Maps a screen point (Electron DIP coordinates) to 0..1 coordinates within the
+ * captured area: the selected window when recording a window, else the source display.
+ */
+export function normalizeScreenPointToCapture(cursor: { x: number; y: number }): {
+	cx: number;
+	cy: number;
+} {
+	const primarySf =
+		process.platform !== "darwin" ? getScreen().getPrimaryDisplay().scaleFactor || 1 : 1;
+
 	const windowBounds = selectedSource?.id?.startsWith("window:") ? selectedWindowBounds : null;
 	if (windowBounds) {
 		const sf =

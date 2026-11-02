@@ -102,6 +102,7 @@ import { resolveSavingExportProgress } from "./exportProgressState";
 import { resolveExportStartSettings } from "./exportStartSettings";
 import { resolveExportStatusModel } from "./exportStatusModel";
 import { resolveMp4ExportRouting } from "./mp4ExportRouting";
+import { useFreshTakeSettled } from "./hooks/useFreshTakeSettled";
 import { resolveMp4ExportSettings } from "./mp4ExportSettings";
 import { useNvidiaCudaExportOptIn } from "./useNvidiaCudaExportOptIn";
 
@@ -325,6 +326,11 @@ type SaveProjectOptions = {
 };
 
 type NamedProjectSaveMode = "rename" | "copy";
+type ControlSaveTakeRequest = Parameters<
+	Parameters<typeof window.electronAPI.onControlSaveTake>[0]
+>[0];
+type ControlSaveTakeReply = Parameters<typeof window.electronAPI.replyControlSaveTake>[0];
+type NamedProjectSaveResult = { success: boolean; path: string | null; message?: string };
 
 type PendingProjectSaveDialog = {
 	resolve: (saved: boolean) => void;
@@ -3107,17 +3113,20 @@ export default function VideoEditor() {
 	/**
 	 * Saves the current project directly into the projects library under a chosen name.
 	 */
-	const saveProjectWithName = useCallback(
-		async (projectName: string, mode: NamedProjectSaveMode = "rename") => {
+	const saveProjectWithNameResult = useCallback(
+		async (
+			projectName: string,
+			mode: NamedProjectSaveMode = "rename",
+		): Promise<NamedProjectSaveResult> => {
 			const trimmedProjectName = projectName.trim();
 			if (!trimmedProjectName) {
 				toast.error("Project name is required");
-				return false;
+				return { success: false, path: null, message: "Project name is required" };
 			}
 
 			if (!currentSourcePath) {
 				toast.error("No video loaded");
-				return false;
+				return { success: false, path: null, message: "No video loaded" };
 			}
 
 			try {
@@ -3139,12 +3148,16 @@ export default function VideoEditor() {
 
 				if (result.canceled) {
 					toast.info("Project save canceled");
-					return false;
+					return { success: false, path: null, message: "Project save canceled" };
 				}
 
 				if (!result.success) {
 					toast.error(result.message || "Failed to save project");
-					return false;
+					return {
+						success: false,
+						path: null,
+						message: result.message || "Failed to save project",
+					};
 				}
 
 				if (result.path) {
@@ -3161,7 +3174,7 @@ export default function VideoEditor() {
 				);
 				await refreshProjectLibrary();
 				toast.success(result.path ? `Project saved to ${result.path}` : "Project saved");
-				return true;
+				return { success: true, path: result.path ?? null };
 			} finally {
 				remountPreview();
 			}
@@ -3176,6 +3189,75 @@ export default function VideoEditor() {
 			remountPreview,
 		],
 	);
+
+	/** Boolean form of {@link saveProjectWithNameResult} for the dialog and inline-name callers. */
+	const saveProjectWithName = useCallback(
+		async (projectName: string, mode: NamedProjectSaveMode = "rename") =>
+			(await saveProjectWithNameResult(projectName, mode)).success,
+		[saveProjectWithNameResult],
+	);
+
+	// Local control server: save the loaded take with no dialog. Only a string name or a null
+	// (in place / under the video's name) is accepted; nothing here can open a Save dialog.
+	const handleControlSaveTakeRef = useRef<(request: ControlSaveTakeRequest) => Promise<void>>(
+		async () => undefined,
+	);
+	handleControlSaveTakeRef.current = async (request) => {
+		const { requestId, projectName } = request;
+		const saveNamed = async (name: string): Promise<ControlSaveTakeReply> => {
+			const result = await saveProjectWithNameResult(name, "rename");
+			if (!result.success) {
+				return {
+					requestId,
+					ok: false,
+					error: result.message || "Failed to save the take",
+				};
+			}
+			return { requestId, ok: true, ...(result.path ? { projectPath: result.path } : {}) };
+		};
+		let reply: ControlSaveTakeReply;
+		try {
+			if (typeof projectName === "string" && projectName.trim() !== "") {
+				reply = await saveNamed(projectName);
+			} else if (projectName === null && currentProjectPath) {
+				// In place. silent also guarantees saveProject returns instead of opening a dialog.
+				const saved = await saveProject(false, { silent: true });
+				reply = saved
+					? { requestId, ok: true, projectPath: currentProjectPath }
+					: { requestId, ok: false, error: "Failed to save the project in place" };
+			} else if (projectName === null && currentSourcePath) {
+				const baseName = currentSourcePath
+					.split(/[\\/]/)
+					.pop()
+					?.replace(/\.[^.]+$/, "");
+				reply = baseName
+					? await saveNamed(baseName)
+					: { requestId, ok: false, error: "The loaded video has no usable name" };
+			} else {
+				reply = {
+					requestId,
+					ok: false,
+					error:
+						projectName === null
+							? "No video loaded"
+							: "A project name must be a non-empty string",
+				};
+			}
+		} catch (error) {
+			reply = { requestId, ok: false, error: getErrorMessage(error) };
+		}
+		window.electronAPI.replyControlSaveTake(reply);
+	};
+
+	useEffect(() => {
+		const cleanup = window.electronAPI.onControlSaveTake((request) => {
+			if (typeof request?.requestId !== "string") {
+				return;
+			}
+			void handleControlSaveTakeRef.current(request);
+		});
+		return () => cleanup?.();
+	}, []);
 
 	const handleProjectSaveDialogSubmit = useCallback(
 		async (event?: React.FormEvent<HTMLFormElement>) => {
@@ -3987,6 +4069,14 @@ export default function VideoEditor() {
 			return next.length === prev.length ? prev : next;
 		});
 	}, [videoPath, isPreviewReady, zoomRegions]);
+
+	useFreshTakeSettled({
+		videoPath,
+		isPreviewReady,
+		pendingFreshRecordingAutoZoomPathRef,
+		zoomRegions,
+		announcePath: currentSourcePath,
+	});
 
 	const handleZoomSpanChange = useCallback((id: string, span: Span) => {
 		setZoomRegions((prev) =>

@@ -455,6 +455,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		...DEFAULT_WEBCAM_BACKGROUND_BLUR,
 	});
 	const [countdownDelay, setCountdownDelayState] = useState(3);
+	// Saved recording preferences are in state (the gate for local control requests).
+	const [recordingPreferencesApplied, setRecordingPreferencesApplied] = useState(false);
 	const mediaRecorder = useRef<MediaRecorder | null>(null);
 	const webcamRecorder = useRef<MediaRecorder | null>(null);
 	const stream = useRef<MediaStream | null>(null);
@@ -476,6 +478,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const recordingStartGeneration = useRef(0);
 	const nativeStopRequestInFlight = useRef(false);
 	const startInFlight = useRef(false);
+	// Takes started in this HUD; a finished take's late HUD close must not end a newer one.
+	const takeStartCount = useRef(0);
 	const hasPromptedForReselect = useRef(false);
 	const hasShownNativeWindowsFallbackToast = useRef(false);
 	const countdownDelayLoaded = useRef(false);
@@ -1044,6 +1048,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			if (typeof window.electronAPI?.recoverNativeScreenRecording !== "function") {
 				return null;
 			}
+			const takeStartCountAtRecovery = takeStartCount.current;
 
 			const result = await window.electronAPI.recoverNativeScreenRecording();
 			if (!result.success || !result.path) {
@@ -1056,7 +1061,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			await storeMicrophoneSidecar(resolvedMicFallbackBlobPromise, result.path, startDelayMs);
 			await finalizeRecordingSession(result.path, webcamPath);
 
-			if (typeof window.electronAPI?.hudOverlayClose === "function") {
+			// As after a normal stop: never close a HUD in which a newer take has started.
+			if (
+				takeStartCount.current === takeStartCountAtRecovery &&
+				typeof window.electronAPI?.hudOverlayClose === "function"
+			) {
 				window.electronAPI.hudOverlayClose();
 			}
 
@@ -1388,6 +1397,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 	const stopRecording = useRef(() => {
 		recordingStartGeneration.current += 1;
+		const takeStartCountAtStop = takeStartCount.current;
 		setPaused(false);
 		if (nativeScreenRecording.current && nativeWarmStartActive.current) {
 			setRecording(false);
@@ -1534,8 +1544,13 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						console.error("Error in background finalization:", bgError);
 					} finally {
 						// After all background tasks are done (webcam, mic sidecars, muxing),
-						// we can safely close the HUD window to release hardware and resources.
-						if (typeof window.electronAPI?.hudOverlayClose === "function") {
+						// we can safely close the HUD window to release hardware and resources,
+						// unless a new take has started in it since (a scripted retake).
+						if (takeStartCount.current !== takeStartCountAtStop) {
+							console.log(
+								"[useScreenRecorder] A new take started in this HUD; keeping it open",
+							);
+						} else if (typeof window.electronAPI?.hudOverlayClose === "function") {
 							console.log(
 								"[useScreenRecorder] All background tasks finished, closing HUD",
 							);
@@ -1616,18 +1631,23 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		recordingPrefsLoaded.current = true;
 
 		void (async () => {
-			const result = await window.electronAPI.getRecordingPreferences();
-			if (result.success) {
-				setMicrophoneEnabled(result.microphoneEnabled);
-				if (result.microphoneDeviceId) {
-					setMicrophoneDeviceId(result.microphoneDeviceId);
+			try {
+				const result = await window.electronAPI.getRecordingPreferences();
+				if (result.success) {
+					setMicrophoneEnabled(result.microphoneEnabled);
+					if (result.microphoneDeviceId) {
+						setMicrophoneDeviceId(result.microphoneDeviceId);
+					}
+					setSystemAudioEnabled(result.systemAudioEnabled);
+					setExcludeTaskbar(result.excludeTaskbar);
+					setWindowFraming(normalizeWindowFramingSettings(result.windowFraming));
+					setWebcamBackgroundBlur(
+						normalizeWebcamBackgroundBlurSettings(result.webcamBackgroundBlur),
+					);
 				}
-				setSystemAudioEnabled(result.systemAudioEnabled);
-				setExcludeTaskbar(result.excludeTaskbar);
-				setWindowFraming(normalizeWindowFramingSettings(result.windowFraming));
-				setWebcamBackgroundBlur(
-					normalizeWebcamBackgroundBlurSettings(result.webcamBackgroundBlur),
-				);
+			} finally {
+				// Queued after the preference updates, so a render that sees this flag sees them.
+				setRecordingPreferencesApplied(true);
 			}
 		})();
 	}, []);
@@ -1768,10 +1788,13 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		};
 	}, [cleanupCapturedMedia, discardActiveNativeCapture, recoverNativeRecordingSession]);
 
-	const startRecording = async () => {
+	const startRecording = async (options?: { countdownDelayOverride?: number }) => {
 		if (startInFlight.current) {
 			return;
 		}
+		// A control request can override the saved countdown for this take only.
+		const effectiveCountdownDelay = options?.countdownDelayOverride ?? countdownDelay;
+		takeStartCount.current += 1;
 		const startGeneration = recordingStartGeneration.current + 1;
 		recordingStartGeneration.current = startGeneration;
 		const startWasCancelled = () => recordingStartGeneration.current !== startGeneration;
@@ -1801,11 +1824,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			const { selectedSource, useNativeMacScreenCapture, useNativeWindowsCapture, micLabel } =
 				preparedStart;
 			const useNativeCapture = useNativeMacScreenCapture || useNativeWindowsCapture;
-			const shouldWarmStartNativeCapture = useNativeCapture && countdownDelay > 0;
-			if (countdownDelay > 0 && !shouldWarmStartNativeCapture) {
+			const shouldWarmStartNativeCapture = useNativeCapture && effectiveCountdownDelay > 0;
+			if (effectiveCountdownDelay > 0 && !shouldWarmStartNativeCapture) {
 				setCountdownActive(true);
 				try {
-					const result = await window.electronAPI.startCountdown(countdownDelay);
+					const result = await window.electronAPI.startCountdown(effectiveCountdownDelay);
 					if (!result.success || result.cancelled || startWasCancelled()) {
 						cleanupCapturedMedia();
 						await stopWebcamRecorder();
@@ -1887,7 +1910,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						setCountdownActive(true);
 						try {
 							const countdownResult =
-								await window.electronAPI.startCountdown(countdownDelay);
+								await window.electronAPI.startCountdown(effectiveCountdownDelay);
 							if (
 								!countdownResult.success ||
 								countdownResult.cancelled ||
@@ -2015,10 +2038,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				}
 			}
 
-			if (nativeWindowsCaptureStartFailed && countdownDelay > 0) {
+			if (nativeWindowsCaptureStartFailed && effectiveCountdownDelay > 0) {
 				setCountdownActive(true);
 				try {
-					const result = await window.electronAPI.startCountdown(countdownDelay);
+					const result = await window.electronAPI.startCountdown(effectiveCountdownDelay);
 					if (!result.success || result.cancelled) {
 						cleanupCapturedMedia();
 						await stopWebcamRecorder();
@@ -2271,6 +2294,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				if (event.data && event.data.size > 0) chunks.current.push(event.data);
 			};
 			recorder.onstop = async () => {
+				const takeStartCountAtStop = takeStartCount.current;
 				cleanupCapturedMedia();
 				if (chunks.current.length === 0) {
 					setFinalizing(false);
@@ -2330,8 +2354,15 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 								}
 							} finally {
 								// After all background tasks are done (webcam),
-								// we can safely close the HUD window to release hardware and resources.
-								if (typeof window.electronAPI?.hudOverlayClose === "function") {
+								// we can safely close the HUD window to release hardware and resources,
+								// unless a new take has started in it since (a scripted retake).
+								if (takeStartCount.current !== takeStartCountAtStop) {
+									console.log(
+										"[useScreenRecorder:browser] A new take started in this HUD; keeping it open",
+									);
+								} else if (
+									typeof window.electronAPI?.hudOverlayClose === "function"
+								) {
 									console.log(
 										"[useScreenRecorder:browser] All background tasks finished, closing HUD",
 									);
@@ -2521,6 +2552,93 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			window.electronAPI?.setRecordingState(false);
 		}
 	}, [cleanupCapturedMedia, discardActiveNativeCapture, markRecordingResumed, recording]);
+
+	// Latest closures for local control requests; the subscription below is registered once.
+	const startRecordingRef = useRef(startRecording);
+	startRecordingRef.current = startRecording;
+	const pauseRecordingRef = useRef(pauseRecording);
+	pauseRecordingRef.current = pauseRecording;
+	const resumeRecordingRef = useRef(resumeRecording);
+	resumeRecordingRef.current = resumeRecording;
+	const cancelRecordingRef = useRef(cancelRecording);
+	cancelRecordingRef.current = cancelRecording;
+
+	useEffect(() => {
+		if (typeof window.electronAPI?.onRecordingControl !== "function") {
+			return;
+		}
+
+		// Main confirms start and stop through set-recording-state; the reply only says whether
+		// the HUD took the request.
+		const handleRecordingControl = async (request: RendererRecordingControlRequest) => {
+			const requestId = request?.requestId;
+			if (typeof requestId !== "string") {
+				return;
+			}
+			const respond = (ok: boolean, error?: string) =>
+				window.electronAPI?.replyRecordingControl?.({
+					requestId,
+					ok,
+					...(error ? { error } : {}),
+				});
+
+			try {
+				switch (request.action) {
+					case "start": {
+						if (startInFlight.current) {
+							respond(false, "A recording is already starting");
+							return;
+						}
+						const countdown = request.options?.countdownSeconds;
+						await startRecordingRef.current({
+							countdownDelayOverride:
+								typeof countdown === "number" &&
+								Number.isFinite(countdown) &&
+								countdown >= 0
+									? countdown
+									: undefined,
+						});
+						break;
+					}
+					case "stop":
+						stopRecording.current();
+						break;
+					case "pause":
+						pauseRecordingRef.current();
+						break;
+					case "resume":
+						resumeRecordingRef.current();
+						break;
+					case "cancel":
+						cancelRecordingRef.current();
+						break;
+					default:
+						respond(
+							false,
+							`Unknown recording control action: ${String(request.action)}`,
+						);
+						return;
+				}
+				respond(true);
+			} catch (error) {
+				respond(false, error instanceof Error ? error.message : String(error));
+			}
+		};
+
+		return window.electronAPI.onRecordingControl((request) => {
+			void handleRecordingControl(request);
+		});
+	}, []);
+
+	// Main sends control requests only after this. It runs after the commit of the first render
+	// with the saved preferences applied, and the refs above were reassigned during that render,
+	// so a controlled start uses the user's mic, system audio, taskbar and framing settings rather
+	// than the hook's defaults. The subscription effect above has already run by then.
+	useEffect(() => {
+		if (recordingPreferencesApplied) {
+			window.electronAPI?.notifyRecordingControlReady?.();
+		}
+	}, [recordingPreferencesApplied]);
 
 	const toggleRecording = async () => {
 		if (starting || countdownActive || finalizing) {

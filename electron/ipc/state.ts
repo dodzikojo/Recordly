@@ -87,6 +87,15 @@ export let lastLeftClick: { timeMs: number; cx: number; cy: number } | null = nu
 export let linuxCursorScreenPoint: { x: number; y: number; updatedAt: number } | null = null;
 export let selectedWindowBounds: WindowBounds | null = null;
 export let windowBoundsCaptureInterval: NodeJS.Timeout | null = null;
+// Agent-driven takes ignore the real cursor and draw it from injected events.
+export let agentCursorTakeActive = false;
+export let lastAgentCursorEventAtMs: number | null = null;
+// Wall-clock time the native capture helper reported it had started (video t=0). Recorded for
+// every take but only consulted for agent-driven takes. Shifted forward by pre-take pauses (the
+// HUD's countdown warm start), which the helpers drop from the video.
+export let nativeCaptureStartedAtMs: number | null = null;
+// Wall-clock start of an open pre-take pause of native capture, else null.
+export let nativeCapturePreTakePauseStartedAtMs: number | null = null;
 
 // ── Native macOS window source cache ─────────────────────────────────────────
 export let cachedNativeMacWindowSources: import("./types").NativeMacWindowSource[] | null = null;
@@ -271,6 +280,18 @@ export function setSelectedWindowBounds(v: WindowBounds | null) {
 }
 export function setWindowBoundsCaptureInterval(v: NodeJS.Timeout | null) {
 	windowBoundsCaptureInterval = v;
+}
+export function setAgentCursorTakeActive(v: boolean) {
+	agentCursorTakeActive = v;
+}
+export function setLastAgentCursorEventAtMs(v: number | null) {
+	lastAgentCursorEventAtMs = v;
+}
+export function setNativeCaptureStartedAtMs(v: number | null) {
+	nativeCaptureStartedAtMs = v;
+}
+export function setNativeCapturePreTakePauseStartedAtMs(v: number | null) {
+	nativeCapturePreTakePauseStartedAtMs = v;
 }
 
 export function setCachedNativeMacWindowSources(
