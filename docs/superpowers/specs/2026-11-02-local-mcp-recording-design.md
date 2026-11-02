@@ -119,7 +119,8 @@ are applied only while the editor holds the take it just opened. On Windows, clo
 
 So:
 - **At stop**, for controlled takes: once the editor has opened the take *and applied its fresh auto-zooms*, it saves
-  the take without prompting, as a `.recordly` project named after the video, in the same folder. `stop` returns both
+  the take without prompting, as a `.recordly` project named after the video, in Recordly's projects folder
+  (`<recordings>/Projects/`, via the editor's existing named save, which is trusted and dialog-free). `stop` returns both
   the video path and the project path. A save failure is reported in the result; the video is kept either way.
 - **At start**, if an editor is open: if it has unsaved changes (a person edited after the stop), save it the same way
   (to its existing project path if it has one). Then bring up the HUD **before** closing the editor, so the app never
@@ -149,8 +150,13 @@ So:
   checkout: path from `--recordly <dir>` or `RECORDLY_DIR`, defaulting to the sibling `../Recordly` of the ORCA repo, with
   a clear error if it's missing. Follow ORCA's own rules (`CLAUDE.md`, `AGENTS.md`, `BUILT_DURING_HACKATHON.md`) for
   adding the script itself.
-- Headed Chromium via a persistent profile kept outside git (the owner signs in once, switches on the open-weights
-  model and Show it built), window opened in `--app` mode with a 1440×900 viewport, `--url` for local or live.
+- Headed Chromium via a persistent profile kept outside git, window opened in `--app` mode with a 1440×900 viewport,
+  `--url` for local or live. `--login` opens that profile with no recording so the owner signs in once and switches on
+  the open-weights model and Show it built; the profile keeps it for every take.
+- Operation (agreed with the owner): Recordly (`RECORDLY_CONTROL=1`, `npm run dev`) and, if local, the ORCA server
+  are started once and left running; the take script does not launch Recordly. Each run is one command
+  (`node web/scripts/record-demo.cjs [--url …] [--only <shot>]`); the script starts and stops every Recordly take
+  and prints each take's video and project path.
 - One function per shot from the script in `demo-video.md`, each its own Recordly agent-cursor take; `--only <shot>`
   retakes one. Shots: Northbank opens (with the proposed filter beats behind a flag, since the owner hasn't agreed them),
   triage, #1 propose and Before/After, the later-revision compare, Show it built, Accept and Export, cell #29 propose and
