@@ -169,7 +169,10 @@ export function createElectronControllerDeps(main: ControlMainHooks): Controller
 	): Promise<HudReply> {
 		const hud = main.getHudWindow();
 		if (!hud || hud.isDestroyed()) {
-			return { ok: false, error: "The recording HUD is not open" };
+			return {
+				ok: false,
+				error: "The recording HUD is not open; if a take was left running, restart Recordly",
+			};
 		}
 		const contents = hud.webContents;
 		if (!(await waitForHudReady(contents, HUD_READY_TIMEOUT_MS))) {

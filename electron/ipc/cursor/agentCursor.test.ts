@@ -188,6 +188,23 @@ describe("ingestAgentCursorEvents", () => {
 		expect(activeCursorSamples).toHaveLength(1);
 	});
 
+	it("rejects an event stamped more than 5 s in the future, so it can't block later events", () => {
+		const now = vi.spyOn(Date, "now").mockReturnValue(10_100);
+		try {
+			const result = ingestAgentCursorEvents([
+				{ atMs: 15_101, x: 10, y: 10, kind: "move" },
+				{ atMs: 10_200, x: 10, y: 10, kind: "move" },
+				{ atMs: 15_100, x: 20, y: 20, kind: "move" },
+			]);
+
+			expect(result.accepted).toBe(2);
+			expect(result.rejected).toEqual([{ index: 0, reason: "timestamp in the future" }]);
+			expect(lastAgentCursorEventAtMs).toBe(15_100);
+		} finally {
+			now.mockRestore();
+		}
+	});
+
 	it("drops events while paused", () => {
 		pauseCursorCapture(10_600);
 

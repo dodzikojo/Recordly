@@ -31,8 +31,8 @@ const cursorEventSchema = z.strictObject({
 		.describe(
 			"Wall-clock epoch milliseconds (Date.now() on this machine) when the event happened",
 		),
-	x: z.number().describe("Screen x coordinate"),
-	y: z.number().describe("Screen y coordinate"),
+	x: z.number().describe("Screen x in DIP (Electron screen coordinates)"),
+	y: z.number().describe("Screen y in DIP (Electron screen coordinates)"),
 	kind: z.enum(["move", "down", "up"]),
 	button: z.enum(["left", "right", "middle"]).optional(),
 	cursor: z.string().optional().describe("CSS cursor name, e.g. pointer or text"),
@@ -115,7 +115,7 @@ function createServer(controller: RecordingController): McpServer {
 		"recordly_stop_recording",
 		{
 			description:
-				"Stop the current recording and save it; returns the video and project paths.",
+				"Stop the current recording and save it; returns the video and project paths. Can take up to a few minutes: it waits for the editor to settle and save the project.",
 		},
 		() => run(() => controller.stop()),
 	);

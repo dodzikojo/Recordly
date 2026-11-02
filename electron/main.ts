@@ -995,7 +995,7 @@ function stopControlServer() {
 	}
 }
 
-// Quit paths that skip before-quit (app.exit) still remove the token file.
+// Quit paths that skip will-quit (app.exit) still remove the token file.
 process.once("exit", stopControlServer);
 
 // On macOS, applications and their menu bar stay active until the user quits
@@ -1005,8 +1005,11 @@ app.on("before-quit", () => {
 	showCursor();
 	cleanupNativeVideoExportSessions();
 	void cleanupAllExportStreams();
-	stopControlServer();
 });
+
+// will-quit, not before-quit: a window can still cancel the quit after before-quit (e.g. the
+// unsaved-changes prompt), and a cancelled quit must leave the control server running.
+app.on("will-quit", stopControlServer);
 
 app.on("window-all-closed", () => {
 	if (IS_SMOKE_EXPORT || process.platform !== "darwin") {

@@ -118,8 +118,10 @@ Lets scripts and agents record screens/windows without touching the HUD. Code is
   `claude mcp add --transport http recordly http://127.0.0.1:47821/mcp --header "Authorization: Bearer <token from control-server.json>"`
 - Agent-cursor takes (`agentCursor: true`): Recordly ignores the real mouse and draws its
   cursor from posted events; injected clicks feed the normal auto-zoom. The cursor clock is
-  backdated to native capture start so drawn clicks line up with the video. Human HUD takes
-  keep the real cursor poller, uiohook, real-click zooms and no auto-save.
+  backdated to native capture start (moved past any countdown pause, which the helpers drop
+  from the video) so drawn clicks line up with the video. Human HUD takes are meant to keep the
+  real cursor poller, uiohook, real-click zooms and no auto-save: code paths unchanged
+  (reviewed); not live-verified.
 - Auto-zoom merges clicks closer than 2.5 s (`CLICK_CLUSTER_MERGE_GAP_MS`); space scripted
   clicks at least 3 s apart for one zoom each.
 - Controlled takes auto-save as `<recordings>\Projects\<video name>.recordly` (dev:

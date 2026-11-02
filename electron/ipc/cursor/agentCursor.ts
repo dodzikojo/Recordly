@@ -41,6 +41,10 @@ export class AgentCursorInactiveError extends Error {
 
 export const MAX_AGENT_CURSOR_BATCH = 1000;
 
+// An event stamped further ahead than this is a bad clock: accepting it would make every later
+// event "out of order" and freeze the take's cursor.
+const MAX_AGENT_CURSOR_FUTURE_MS = 5_000;
+
 const MAX_AGENT_CURSOR_TIME_LEAD_MS = 10_000;
 
 /**
@@ -216,6 +220,7 @@ export function ingestAgentCursorEvents(raw: unknown): AgentCursorIngestResult {
 	}
 
 	const result: AgentCursorIngestResult = { accepted: 0, rejected: [] };
+	const latestAcceptableAtMs = Date.now() + MAX_AGENT_CURSOR_FUTURE_MS;
 
 	raw.forEach((rawEvent, index) => {
 		try {
@@ -226,6 +231,10 @@ export function ingestAgentCursorEvents(raw: unknown): AgentCursorIngestResult {
 			}
 			const event = parsed.event;
 
+			if (event.atMs > latestAcceptableAtMs) {
+				result.rejected.push({ index, reason: "timestamp in the future" });
+				return;
+			}
 			if (isCursorCapturePaused()) {
 				result.rejected.push({ index, reason: "paused" });
 				return;
