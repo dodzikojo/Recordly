@@ -455,71 +455,123 @@ async function measureSettledWindow(page, { intervalMs = 50, maxMs = 1000 } = {}
 	return previous;
 }
 
+const CDP_DETACH_TIMEOUT_MS = 500;
+
+/**
+ * Runs fn(cdp) with a CDP session on the page, bounded as a whole by timeoutMs: attaching, the work
+ * and detaching can each hang on a wedged Chrome, and none of them may hang the caller. A session
+ * attached after the timeout already fired is detached straight away.
+ */
+async function withBoundedCdpSession(page, { timeoutMs, timeoutMessage }, fn) {
+	let cdp;
+	let abandoned = false;
+	let timer;
+	const detach = async (session) => {
+		let detachTimer;
+		const bound = new Promise((resolve) => {
+			detachTimer = setTimeout(resolve, CDP_DETACH_TIMEOUT_MS);
+		});
+		try {
+			await Promise.race([Promise.resolve(session.detach()).catch(() => undefined), bound]);
+		} finally {
+			clearTimeout(detachTimer);
+		}
+	};
+	const work = (async () => {
+		const session = await page.context().newCDPSession(page);
+		if (abandoned) {
+			await detach(session);
+			throw new Error(timeoutMessage);
+		}
+		cdp = session;
+		return fn(session);
+	})();
+	// If the timeout wins, the abandoned work must not surface as an unhandled rejection.
+	work.catch(() => undefined);
+	const timeout = new Promise((_, reject) => {
+		timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+	});
+	try {
+		return await Promise.race([work, timeout]);
+	} finally {
+		abandoned = true;
+		clearTimeout(timer);
+		if (cdp) {
+			await detach(cdp);
+		}
+	}
+}
+
 /**
  * Sizes the browser window so the page viewport is width x height. Needed when launched with
  * viewport: null (e.g. --app windows), where the OS window size governs. Display scaling can leave
  * it a pixel or two off; that's cosmetic (cursor mapping reads live metrics per event), so up to
  * VIEWPORT_TOLERANCE_PX per axis is accepted with a warning. Throws only beyond that (the display
- * can't fit it). Resolves to the achieved { width, height }.
+ * can't fit it). Resolves to the achieved { width, height }. Bounded by timeoutMs (default 20 s).
  */
-async function sizeWindowForViewport(page, { width, height }) {
-	const cdp = await page.context().newCDPSession(page);
-	try {
-		const { windowId, bounds } = await cdp.send("Browser.getWindowForTarget");
-		if (bounds && bounds.windowState && bounds.windowState !== "normal") {
-			await cdp.send("Browser.setWindowBounds", {
-				windowId,
-				bounds: { windowState: "normal" },
-			});
-		}
+async function sizeWindowForViewport(page, { width, height, timeoutMs = 20000 }) {
+	return withBoundedCdpSession(
+		page,
+		{
+			timeoutMs,
+			timeoutMessage: `Couldn't size the browser window within ${timeoutMs} ms`,
+		},
+		(cdp) => sizeWithSession(cdp, page, { width, height }),
+	);
+}
 
-		const resize = async (request) => {
-			await cdp.send("Browser.setWindowBounds", {
-				windowId,
-				bounds: { left: 0, top: 0, ...request },
-			});
-			return measureSettledWindow(page);
-		};
-		const error = (view) =>
-			Math.abs(view.innerWidth - width) + Math.abs(view.innerHeight - height);
-
-		let current = await measureSettledWindow(page);
-		let best;
-		for (let attempt = 0; attempt < MAX_SIZE_ATTEMPTS && error(current) > 0; attempt++) {
-			// Correct by the remaining delta from where the window really is now.
-			const request = {
-				width: current.outerWidth + (width - current.innerWidth),
-				height: current.outerHeight + (height - current.innerHeight),
-			};
-			current = await resize(request);
-			if (!best || error(current) < best.error) {
-				best = { error: error(current), request };
-			}
-		}
-		// Fractional display scaling can make corrections oscillate; end on the closest size seen.
-		if (best && error(current) > best.error) {
-			current = await resize(best.request);
-		}
-
-		const achieved = { width: current.innerWidth, height: current.innerHeight };
-		if (achieved.width === width && achieved.height === height) {
-			return achieved;
-		}
-		if (
-			Math.abs(achieved.width - width) <= VIEWPORT_TOLERANCE_PX &&
-			Math.abs(achieved.height - height) <= VIEWPORT_TOLERANCE_PX
-		) {
-			console.warn(
-				`Browser viewport is ${achieved.width}×${achieved.height} rather than ${width}×${height}; continuing (cursor mapping is unaffected)`,
-			);
-			return achieved;
-		}
-		throw new Error(
-			`Couldn't size the browser viewport to ${width}×${height} (got ${achieved.width}×${achieved.height}); the display may be too small`,
-		);
-	} finally {
-		await cdp.detach().catch(() => undefined);
+async function sizeWithSession(cdp, page, { width, height }) {
+	const { windowId, bounds } = await cdp.send("Browser.getWindowForTarget");
+	if (bounds && bounds.windowState && bounds.windowState !== "normal") {
+		await cdp.send("Browser.setWindowBounds", {
+			windowId,
+			bounds: { windowState: "normal" },
+		});
 	}
+
+	const resize = async (request) => {
+		await cdp.send("Browser.setWindowBounds", {
+			windowId,
+			bounds: { left: 0, top: 0, ...request },
+		});
+		return measureSettledWindow(page);
+	};
+	const error = (view) => Math.abs(view.innerWidth - width) + Math.abs(view.innerHeight - height);
+
+	let current = await measureSettledWindow(page);
+	let best;
+	for (let attempt = 0; attempt < MAX_SIZE_ATTEMPTS && error(current) > 0; attempt++) {
+		// Correct by the remaining delta from where the window really is now.
+		const request = {
+			width: current.outerWidth + (width - current.innerWidth),
+			height: current.outerHeight + (height - current.innerHeight),
+		};
+		current = await resize(request);
+		if (!best || error(current) < best.error) {
+			best = { error: error(current), request };
+		}
+	}
+	// Fractional display scaling can make corrections oscillate; end on the closest size seen.
+	if (best && error(current) > best.error) {
+		current = await resize(best.request);
+	}
+
+	const achieved = { width: current.innerWidth, height: current.innerHeight };
+	if (achieved.width === width && achieved.height === height) {
+		return achieved;
+	}
+	if (
+		Math.abs(achieved.width - width) <= VIEWPORT_TOLERANCE_PX &&
+		Math.abs(achieved.height - height) <= VIEWPORT_TOLERANCE_PX
+	) {
+		console.warn(
+			`Browser viewport is ${achieved.width}×${achieved.height} rather than ${width}×${height}; continuing (cursor mapping is unaffected)`,
+		);
+		return achieved;
+	}
+	throw new Error(
+		`Couldn't size the browser viewport to ${width}×${height} (got ${achieved.width}×${achieved.height}); the display may be too small`,
+	);
 }
 
 /**
@@ -529,36 +581,32 @@ async function sizeWindowForViewport(page, { width, height }) {
  * reads live window metrics per event, so a maximized window needs no special handling there.
  */
 async function maximizeWindow(page, { timeoutMs = 5000 } = {}) {
-	const cdp = await page.context().newCDPSession(page);
-	let timer;
-	try {
-		const work = (async () => {
-			const { windowId, bounds } = await cdp.send("Browser.getWindowForTarget");
-			if (!bounds || bounds.windowState !== "maximized") {
+	return withBoundedCdpSession(
+		page,
+		{
+			timeoutMs,
+			timeoutMessage: `Couldn't maximize the browser window within ${timeoutMs} ms`,
+		},
+		async (cdp) => {
+			let { windowId, bounds } = await cdp.send("Browser.getWindowForTarget");
+			// Confirm the state took; retry the maximize once if it didn't.
+			for (let attempt = 0; attempt < 2; attempt++) {
+				if (bounds && bounds.windowState === "maximized") {
+					break;
+				}
 				await cdp.send("Browser.setWindowBounds", {
 					windowId,
 					bounds: { windowState: "maximized" },
 				});
+				({ windowId, bounds } = await cdp.send("Browser.getWindowForTarget"));
+			}
+			if (!bounds || bounds.windowState !== "maximized") {
+				throw new Error("The browser window did not maximize");
 			}
 			const settled = await measureSettledWindow(page);
 			return { width: settled.innerWidth, height: settled.innerHeight };
-		})();
-		// If the timeout wins, the abandoned work must not surface as an unhandled rejection.
-		work.catch(() => undefined);
-		const timeout = new Promise((_, reject) => {
-			timer = setTimeout(
-				() =>
-					reject(
-						new Error(`Couldn't maximize the browser window within ${timeoutMs} ms`),
-					),
-				timeoutMs,
-			);
-		});
-		return await Promise.race([work, timeout]);
-	} finally {
-		clearTimeout(timer);
-		await cdp.detach().catch(() => undefined);
-	}
+		},
+	);
 }
 
 // --- Gliding mouse -----------------------------------------------------------------------------

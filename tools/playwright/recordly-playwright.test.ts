@@ -56,7 +56,7 @@ interface Helper {
 	): { x: number; y: number };
 	sizeWindowForViewport(
 		page: unknown,
-		size: { width: number; height: number },
+		size: { width: number; height: number; timeoutMs?: number },
 	): Promise<{ width: number; height: number }>;
 	maximizeWindow(
 		page: unknown,
@@ -744,6 +744,16 @@ describe("sizeWindowForViewport", () => {
 		);
 	});
 
+	it("rejects within the timeout when attaching never resolves", async () => {
+		const page = {
+			context: () => ({ newCDPSession: () => new Promise(() => undefined) }),
+			evaluate: async () => ({}),
+		};
+		await expect(
+			helper.sizeWindowForViewport(page, { width: 1440, height: 900, timeoutMs: 50 }),
+		).rejects.toThrow(/Couldn't size the browser window within 50 ms/);
+	});
+
 	it("throws when the result is far off even if it keeps landing off", async () => {
 		const { page } = fakeWindow({ chromeW: 16, chromeH: 130, widthError: [50] });
 		await expect(
@@ -759,6 +769,9 @@ describe("maximizeWindow", () => {
 		staleReads?: number;
 		failOn?: string;
 		hangOn?: string;
+		attachHangs?: boolean;
+		detachHangs?: boolean;
+		ignoreMaximizeTimes?: number;
 	}) {
 		const normal = { outerW: 1000, outerH: 700 };
 		const maxed = { outerW: 1920, outerH: 1040 };
@@ -766,6 +779,7 @@ describe("maximizeWindow", () => {
 		let windowState = opts.startState ?? "normal";
 		let staleLeft = 0;
 		let detached = 0;
+		let ignoreLeft = opts.ignoreMaximizeTimes ?? 0;
 		const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
 		const cdp = {
 			send: async (method: string, params: Record<string, unknown> = {}) => {
@@ -781,6 +795,10 @@ describe("maximizeWindow", () => {
 				}
 				const bounds = params.bounds as { windowState?: string };
 				if (bounds.windowState) {
+					if (ignoreLeft > 0) {
+						ignoreLeft -= 1;
+						return {};
+					}
 					windowState = bounds.windowState;
 					staleLeft = opts.staleReads ?? 0;
 				}
@@ -788,10 +806,20 @@ describe("maximizeWindow", () => {
 			},
 			detach: async () => {
 				detached += 1;
+				if (opts.detachHangs) {
+					return new Promise<void>(() => undefined);
+				}
 			},
 		};
 		const page = {
-			context: () => ({ newCDPSession: async () => cdp }),
+			context: () => ({
+				newCDPSession: async () => {
+					if (opts.attachHangs) {
+						return new Promise(() => undefined);
+					}
+					return cdp;
+				},
+			}),
 			evaluate: async () => {
 				// Stale reads keep returning the pre-maximize size, like a resize landing late.
 				const view = windowState === "maximized" && staleLeft === 0 ? maxed : normal;
@@ -840,6 +868,36 @@ describe("maximizeWindow", () => {
 		const { page, detached } = fakeMaximizable({ failOn: "Browser.setWindowBounds" });
 		await expect(helper.maximizeWindow(page)).rejects.toThrow(/setWindowBounds failed/);
 		expect(detached()).toBe(1);
+	});
+
+	it("confirms the state and retries the maximize once when it didn't take", async () => {
+		const { page, sent } = fakeMaximizable({ ignoreMaximizeTimes: 1 });
+		await expect(helper.maximizeWindow(page)).resolves.toEqual({ width: 1904, height: 910 });
+		expect(boundsCalls(sent)).toHaveLength(2);
+	});
+
+	it("throws when the window still isn't maximized after the retry", async () => {
+		const { page, sent, detached } = fakeMaximizable({ ignoreMaximizeTimes: 5 });
+		await expect(helper.maximizeWindow(page)).rejects.toThrow(/did not maximize/);
+		expect(boundsCalls(sent)).toHaveLength(2);
+		expect(detached()).toBe(1);
+	});
+
+	it("rejects within the timeout when attaching the CDP session never resolves", async () => {
+		const { page } = fakeMaximizable({ attachHangs: true });
+		const started = Date.now();
+		await expect(helper.maximizeWindow(page, { timeoutMs: 50 })).rejects.toThrow(
+			/Couldn't maximize the browser window within 50 ms/,
+		);
+		expect(Date.now() - started).toBeLessThan(1000);
+	});
+
+	it("still returns the result when detaching never settles", async () => {
+		const { page, detached } = fakeMaximizable({ detachHangs: true });
+		const started = Date.now();
+		await expect(helper.maximizeWindow(page)).resolves.toEqual({ width: 1904, height: 910 });
+		expect(detached()).toBe(1);
+		expect(Date.now() - started).toBeLessThan(3000);
 	});
 
 	it("times out instead of hanging, and still detaches", async () => {

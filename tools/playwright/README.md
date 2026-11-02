@@ -61,7 +61,10 @@ in a persistent context: one already open at `url` (prefix match), else one that
 `maximizeWindow(page, { timeoutMs = 5000 })` maximizes the Chrome window through CDP
 (`Browser.setWindowBounds` with `windowState: "maximized"`), waits until the page's inner size is
 stable, and resolves to the achieved `{ width, height }`. An already-maximized window is only
-measured. It rejects rather than hangs after `timeoutMs`. Use it instead of `sizeWindowForViewport`
+measured. It confirms the window really reports `maximized` (retrying once). Attaching, the work
+and detaching are all bounded: it rejects after `timeoutMs` rather than hang, and a detach that
+never settles is abandoned after 500 ms. `sizeWindowForViewport` takes the same bounds via an
+optional `timeoutMs` (default 20 s). Use it instead of `sizeWindowForViewport`
 for takes that should fill the screen (`calibrate.cjs --maximized`).
 
 Call `attachCursor` once per take; it can be called again on the same browser context after
