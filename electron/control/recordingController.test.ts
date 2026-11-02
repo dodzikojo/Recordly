@@ -257,6 +257,51 @@ describe("createRecordingController start", () => {
 		expect(editor.close).not.toHaveBeenCalled();
 	});
 
+	it("fails retryably and closes nothing while the last take's HUD is still finalizing", async () => {
+		const { controller, deps, calls, setEditor } = setup();
+		const editor = fakeEditor(calls, { dirty: true });
+		setEditor(editor);
+		// main's ensureHud waits up to 20 s for the finishing HUD, then rejects like this.
+		deps.ensureHud.mockRejectedValueOnce(
+			new ControlError(
+				"conflict",
+				"The last take is still finalizing; try start again shortly",
+			),
+		);
+
+		const error = await controller
+			.start({ source: { display: 0 }, agentCursor: true })
+			.catch((e) => e);
+
+		expect(error).toBeInstanceOf(ControlError);
+		expect(error.code).toBe("conflict");
+		expect(error.message).toBe("The last take is still finalizing; try start again shortly");
+		expect(calls).toEqual(["save"]);
+		expect(editor.close).not.toHaveBeenCalled();
+		expect(deps.selectSource).not.toHaveBeenCalled();
+		expect(deps.setAgentCursorTakeActive).not.toHaveBeenCalled();
+		expect(deps.sendToHud).not.toHaveBeenCalled();
+		expect(controller.status().recording).toBe(false);
+
+		// Nothing is left busy or half-done: the retry goes through.
+		editor.hasUnsavedChanges.mockReturnValue(false);
+		await controller.start({ source: { display: 0 }, agentCursor: true });
+		expect(calls).toEqual(["save", "ensureHud", "close", "selectSource", "sendToHud:start"]);
+		expect(controller.status()).toMatchObject({ recording: true, agentCursor: true });
+	});
+
+	it("reports an unexpected HUD failure as internal", async () => {
+		const { controller, deps } = setup();
+		deps.ensureHud.mockRejectedValueOnce(new Error("renderer crashed"));
+
+		const error = await controller.start({ source: { display: 0 } }).catch((e) => e);
+
+		expect(error).toBeInstanceOf(ControlError);
+		expect(error.code).toBe("internal");
+		expect(error.message).toContain("renderer crashed");
+		expect(deps.sendToHud).not.toHaveBeenCalled();
+	});
+
 	it("that never reaches recording-state returns timeout and clears the agent flag", async () => {
 		const { controller, deps } = setup({ hud: () => ({ ok: true }) });
 

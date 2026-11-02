@@ -455,6 +455,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		...DEFAULT_WEBCAM_BACKGROUND_BLUR,
 	});
 	const [countdownDelay, setCountdownDelayState] = useState(3);
+	// Saved recording preferences are in state (the gate for local control requests).
+	const [recordingPreferencesApplied, setRecordingPreferencesApplied] = useState(false);
 	const mediaRecorder = useRef<MediaRecorder | null>(null);
 	const webcamRecorder = useRef<MediaRecorder | null>(null);
 	const stream = useRef<MediaStream | null>(null);
@@ -1046,6 +1048,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			if (typeof window.electronAPI?.recoverNativeScreenRecording !== "function") {
 				return null;
 			}
+			const takeStartCountAtRecovery = takeStartCount.current;
 
 			const result = await window.electronAPI.recoverNativeScreenRecording();
 			if (!result.success || !result.path) {
@@ -1058,7 +1061,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			await storeMicrophoneSidecar(resolvedMicFallbackBlobPromise, result.path, startDelayMs);
 			await finalizeRecordingSession(result.path, webcamPath);
 
-			if (typeof window.electronAPI?.hudOverlayClose === "function") {
+			// As after a normal stop: never close a HUD in which a newer take has started.
+			if (
+				takeStartCount.current === takeStartCountAtRecovery &&
+				typeof window.electronAPI?.hudOverlayClose === "function"
+			) {
 				window.electronAPI.hudOverlayClose();
 			}
 
@@ -1624,18 +1631,23 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		recordingPrefsLoaded.current = true;
 
 		void (async () => {
-			const result = await window.electronAPI.getRecordingPreferences();
-			if (result.success) {
-				setMicrophoneEnabled(result.microphoneEnabled);
-				if (result.microphoneDeviceId) {
-					setMicrophoneDeviceId(result.microphoneDeviceId);
+			try {
+				const result = await window.electronAPI.getRecordingPreferences();
+				if (result.success) {
+					setMicrophoneEnabled(result.microphoneEnabled);
+					if (result.microphoneDeviceId) {
+						setMicrophoneDeviceId(result.microphoneDeviceId);
+					}
+					setSystemAudioEnabled(result.systemAudioEnabled);
+					setExcludeTaskbar(result.excludeTaskbar);
+					setWindowFraming(normalizeWindowFramingSettings(result.windowFraming));
+					setWebcamBackgroundBlur(
+						normalizeWebcamBackgroundBlurSettings(result.webcamBackgroundBlur),
+					);
 				}
-				setSystemAudioEnabled(result.systemAudioEnabled);
-				setExcludeTaskbar(result.excludeTaskbar);
-				setWindowFraming(normalizeWindowFramingSettings(result.windowFraming));
-				setWebcamBackgroundBlur(
-					normalizeWebcamBackgroundBlurSettings(result.webcamBackgroundBlur),
-				);
+			} finally {
+				// Queued after the preference updates, so a render that sees this flag sees them.
+				setRecordingPreferencesApplied(true);
 			}
 		})();
 	}, []);
@@ -2617,6 +2629,16 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			void handleRecordingControl(request);
 		});
 	}, []);
+
+	// Main sends control requests only after this. It runs after the commit of the first render
+	// with the saved preferences applied, and the refs above were reassigned during that render,
+	// so a controlled start uses the user's mic, system audio, taskbar and framing settings rather
+	// than the hook's defaults. The subscription effect above has already run by then.
+	useEffect(() => {
+		if (recordingPreferencesApplied) {
+			window.electronAPI?.notifyRecordingControlReady?.();
+		}
+	}, [recordingPreferencesApplied]);
 
 	const toggleRecording = async () => {
 		if (starting || countdownActive || finalizing) {

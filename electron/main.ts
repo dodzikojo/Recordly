@@ -25,6 +25,7 @@ import {
 } from "./control/config";
 import { createElectronControllerDeps } from "./control/electronBridge";
 import { type ControlServerHandle, startControlServer } from "./control/httpServer";
+import { waitForFinishingHudToClose } from "./control/hudFinalization";
 import { createMcpRequestHandler } from "./control/mcpServer";
 import { createRecordingController } from "./control/recordingController";
 import { showCursor } from "./cursorHider";
@@ -907,35 +908,14 @@ function createSourceSelectorWindowWrapper() {
 	return sourceSelectorWindow;
 }
 
-const HUD_FINALIZE_WAIT_MS = 20_000;
-
-function waitForWindowClosed(window: BrowserWindow, ms: number): Promise<boolean> {
-	if (window.isDestroyed()) {
-		return Promise.resolve(true);
-	}
-	return new Promise((resolve) => {
-		const onClosed = () => {
-			clearTimeout(timer);
-			resolve(true);
-		};
-		const timer = setTimeout(() => {
-			window.removeListener("closed", onClosed);
-			resolve(false);
-		}, ms);
-		window.once("closed", onClosed);
-	});
-}
-
 /** Control server: the HUD exists, is shown and is mainWindow (so the tray's Stop reaches it). */
 async function ensureHudForControl(): Promise<void> {
 	let hud = getHudOverlayWindow();
 	if (hud && hud === hudFinishingLastTake && !hud.isVisible()) {
 		// After a stop the HUD hides behind the editor and closes itself (hud-overlay-close) once
-		// the take is finalized. A take started in it before then would be ended by that close,
-		// and on Windows the app would quit once the editor closes too. Let it finish first.
-		if (!(await waitForWindowClosed(hud, HUD_FINALIZE_WAIT_MS))) {
-			console.warn("[control] The last take's HUD is still finalizing; reusing it");
-		}
+		// the take is finalized. Never start a take in it before then: wait up to 20 s for the
+		// close, else reject with a retryable conflict. Nothing has been closed at this point.
+		await waitForFinishingHudToClose(hud);
 		hud = getHudOverlayWindow();
 	}
 	if (!hud) {

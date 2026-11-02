@@ -653,11 +653,13 @@ interface Window {
 			error?: string;
 		}>;
 		onStopRecordingFromTray: (callback: () => void) => () => void;
-		/** Local control server → HUD recorder; subscribing tells main the HUD is ready. */
+		/** Local control server → HUD recorder. */
 		onRecordingControl: (
 			callback: (request: RendererRecordingControlRequest) => void,
 		) => () => void;
 		replyRecordingControl: (reply: RendererRecordingControlReply) => void;
+		/** Main sends no control request to the HUD before this (preferences loaded). */
+		notifyRecordingControlReady: () => void;
 		onRecordingStateChanged: (
 			callback: (state: { recording: boolean; sourceName: string }) => void,
 		) => () => void;

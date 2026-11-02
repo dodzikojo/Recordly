@@ -627,9 +627,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		const listener = (_event: Electron.IpcRendererEvent, request: RecordingControlRequest) =>
 			callback(request);
 		ipcRenderer.on("recording-control", listener);
-		// A freshly created HUD is still loading; main waits for this before sending requests.
-		ipcRenderer.send("recording-control-ready");
 		return () => ipcRenderer.removeListener("recording-control", listener);
+	},
+	// The HUD calls this once it can serve control requests with the user's saved preferences;
+	// main waits for it before sending any (a freshly created HUD is still loading).
+	notifyRecordingControlReady: () => {
+		ipcRenderer.send("recording-control-ready");
 	},
 	replyRecordingControl: (reply: RecordingControlReply) => {
 		ipcRenderer.send("recording-control-reply", reply);

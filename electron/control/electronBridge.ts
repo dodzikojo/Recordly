@@ -59,8 +59,8 @@ export function createElectronControllerDeps(main: ControlMainHooks): Controller
 	const saveMs = DEFAULT_CONTROLLER_TIMEOUTS.saveMs;
 	let sourcesById = new Map<string, SelectedSource>();
 
-	// The HUD's preload announces `recording-control-ready` when its recorder subscribes, so a
-	// request is never sent into a page that is still loading.
+	// The HUD announces `recording-control-ready` once its recorder is subscribed and has the
+	// user's saved preferences in state, so a request never reaches a page that is still loading.
 	const readyContentsIds = new Set<number>();
 	const readyWaiters = new Set<() => void>();
 	ipcMain.on("recording-control-ready", (event: IpcMainEvent) => {
