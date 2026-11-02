@@ -82,6 +82,7 @@ import {
 	shouldUseWindowsBrowserMicrophoneFallback,
 } from "../recording/windowsFallbacks";
 import {
+	agentCursorTakeActive,
 	cachedSystemCursorAssets,
 	cachedSystemCursorAssetsSourceMtimeMs,
 	currentVideoPath,
@@ -99,6 +100,7 @@ import {
 	nativeScreenRecordingActive,
 	selectedSource,
 	setActiveCursorSamples,
+	setAgentCursorTakeActive,
 	setCachedSystemCursorAssets,
 	setCachedSystemCursorAssetsSourceMtimeMs,
 	setCursorCaptureStartTimeMs,
@@ -107,6 +109,7 @@ import {
 	setFfmpegCaptureTargetPath,
 	setFfmpegScreenRecordingActive,
 	setIsCursorCaptureActive,
+	setLastAgentCursorEventAtMs,
 	setLastLeftClick,
 	setLinuxCursorScreenPoint,
 	setNativeCaptureMicrophonePath,
@@ -1827,7 +1830,10 @@ export function registerRecordingHandlers(
 			stopCursorCapture();
 			stopInteractionCapture();
 			startWindowBoundsCapture();
-			void startNativeCursorMonitor();
+			// Agent-driven takes ignore the real cursor: events arrive via ingestAgentCursorEvents.
+			if (!agentCursorTakeActive) {
+				void startNativeCursorMonitor();
+			}
 			setIsCursorCaptureActive(true);
 			setActiveCursorSamples([]);
 			setPendingCursorSamples([]);
@@ -1835,9 +1841,12 @@ export function registerRecordingHandlers(
 			resetCursorCaptureClock();
 			setLinuxCursorScreenPoint(null);
 			setLastLeftClick(null);
-			sampleCursorPoint();
-			startCursorSampling();
-			void startInteractionCapture();
+			setLastAgentCursorEventAtMs(null);
+			if (!agentCursorTakeActive) {
+				sampleCursorPoint();
+				startCursorSampling();
+				void startInteractionCapture();
+			}
 		} else {
 			setIsCursorCaptureActive(false);
 			stopCursorCapture();
@@ -1849,6 +1858,8 @@ export function registerRecordingHandlers(
 			resetCursorCaptureClock();
 			snapshotCursorTelemetryForPersistence();
 			setActiveCursorSamples([]);
+			setAgentCursorTakeActive(false);
+			setLastAgentCursorEventAtMs(null);
 		}
 
 		const source = selectedSource || { name: "Screen" };
@@ -1873,7 +1884,9 @@ export function registerRecordingHandlers(
 
 	ipcMain.handle("resume-cursor-capture", (_, resumedAtMs?: unknown) => {
 		resumeCursorCapture(normalizeRendererTimestampMs(resumedAtMs));
-		sampleCursorPoint();
+		if (!agentCursorTakeActive) {
+			sampleCursorPoint();
+		}
 		return { success: true };
 	});
 

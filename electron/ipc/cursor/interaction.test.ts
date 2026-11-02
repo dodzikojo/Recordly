@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({
 	app: {
@@ -12,9 +12,55 @@ vi.mock("electron", () => ({
 }));
 
 import {
+	activeCursorSamples,
+	setActiveCursorSamples,
+	setIsCursorCaptureActive,
+	setLastLeftClick,
+} from "../state";
+import {
+	recordCursorDownAt,
+	recordCursorUpAt,
 	repairBundledUiohookBinaryForCurrentArch,
 	shouldStartGlobalInteractionHook,
 } from "./interaction";
+
+describe("recordCursorDownAt", () => {
+	beforeEach(() => {
+		setIsCursorCaptureActive(true);
+		setActiveCursorSamples([]);
+		setLastLeftClick(null);
+	});
+
+	it("classifies clicks, double-clicks (350 ms, 0.04 distance) and other buttons", () => {
+		const point = { cx: 0.5, cy: 0.5 };
+
+		recordCursorDownAt(point, 1_000, 1);
+		recordCursorDownAt({ cx: 0.53, cy: 0.5 }, 1_350, 1);
+		recordCursorDownAt({ cx: 0.53, cy: 0.5 }, 1_701, 1);
+		recordCursorDownAt({ cx: 0.6, cy: 0.5 }, 1_800, 1);
+		recordCursorDownAt(point, 1_900, 2);
+		recordCursorDownAt(point, 2_000, 3);
+
+		expect(activeCursorSamples.map((sample) => sample.interactionType)).toEqual([
+			"click",
+			"double-click",
+			"click",
+			"click",
+			"right-click",
+			"middle-click",
+		]);
+	});
+
+	it("uses the supplied cursor type, and recordCursorUpAt records mouseup", () => {
+		recordCursorDownAt({ cx: 0.1, cy: 0.2 }, 100, 1, "pointer");
+		recordCursorUpAt({ cx: 0.1, cy: 0.2 }, 150, "pointer");
+
+		expect(activeCursorSamples).toEqual([
+			{ timeMs: 100, cx: 0.1, cy: 0.2, interactionType: "click", cursorType: "pointer" },
+			{ timeMs: 150, cx: 0.1, cy: 0.2, interactionType: "mouseup", cursorType: "pointer" },
+		]);
+	});
+});
 
 describe("shouldStartGlobalInteractionHook", () => {
 	it("does not start the synchronous uiohook event tap on macOS", () => {
@@ -32,7 +78,9 @@ describe("repairBundledUiohookBinaryForCurrentArch", () => {
 
 	afterEach(async () => {
 		await Promise.all(
-			tempRoots.splice(0).map((tempRoot) => fs.rm(tempRoot, { recursive: true, force: true })),
+			tempRoots
+				.splice(0)
+				.map((tempRoot) => fs.rm(tempRoot, { recursive: true, force: true })),
 		);
 	});
 
@@ -50,9 +98,14 @@ describe("repairBundledUiohookBinaryForCurrentArch", () => {
 
 		const log = vi.fn();
 		const repaired = repairBundledUiohookBinaryForCurrentArch(
-			Object.assign(new Error("mach-o file, but is an incompatible architecture (have 'x86_64', need 'arm64')"), {
-				code: "ERR_DLOPEN_FAILED",
-			}),
+			Object.assign(
+				new Error(
+					"mach-o file, but is an incompatible architecture (have 'x86_64', need 'arm64')",
+				),
+				{
+					code: "ERR_DLOPEN_FAILED",
+				},
+			),
 			{ packageRoot, platform: "darwin", arch: "arm64", log },
 		);
 
