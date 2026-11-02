@@ -18,7 +18,7 @@ warning bar inside the recorded window.
 ## Run the calibration take
 
 1. Start Recordly with the control server on: `RECORDLY_CONTROL=1` (or `--control`).
-2. `node calibrate.cjs`
+2. `node calibrate.cjs` (add `--maximized` to maximize the window instead; the achieved viewport is printed)
 
 A Chrome window with five buttons opens, is sized to a 1440x900 viewport, and each button is
 clicked in turn while Recordly records the window. The script prints `videoPath` and
@@ -33,6 +33,7 @@ const {
 	connect,
 	glideClick,
 	glideTo,
+	maximizeWindow,
 	openAppPage,
 	sizeWindowForViewport,
 } = require("<recordly checkout>/tools/playwright/recordly-playwright.cjs");
@@ -57,6 +58,12 @@ in a persistent context: one already open at `url` (prefix match), else one that
 `timeoutMs`, else the first page (or a new one) navigated to `url`. The page is brought to the front.
 `calibrate.cjs` uses it.
 
+`maximizeWindow(page, { timeoutMs = 5000 })` maximizes the Chrome window through CDP
+(`Browser.setWindowBounds` with `windowState: "maximized"`), waits until the page's inner size is
+stable, and resolves to the achieved `{ width, height }`. An already-maximized window is only
+measured. It rejects rather than hangs after `timeoutMs`. Use it instead of `sizeWindowForViewport`
+for takes that should fill the screen (`calibrate.cjs --maximized`).
+
 Call `attachCursor` once per take; it can be called again on the same browser context after
 `detach()` (the page binding and init script are installed once per context and reused, and events
 after `detach()` are ignored).
@@ -80,5 +87,7 @@ the window frame or non-100% display scaling), pass `--offset-x` / `--offset-y` 
 to every point) to `calibrate.cjs`, or `attachCursor(page, { offsetX, offsetY })` in your script,
 and record again until the cursor lands on the button centres.
 
-The window must stay in the `normal` state (not maximized or minimized) at the size you
-calibrated.
+Keep the window at the size you calibrated (not minimized, and not resized mid-take). Coordinates
+come from live window metrics at each event, so a maximized window (whose resize borders sit
+off-screen on Windows) needs no special case in the helper; verify the cursor placement live with
+`calibrate.cjs --maximized`.

@@ -58,6 +58,10 @@ interface Helper {
 		page: unknown,
 		size: { width: number; height: number },
 	): Promise<{ width: number; height: number }>;
+	maximizeWindow(
+		page: unknown,
+		options?: { timeoutMs?: number },
+	): Promise<{ width: number; height: number }>;
 	glideClick(
 		page: unknown,
 		locator: unknown,
@@ -745,6 +749,105 @@ describe("sizeWindowForViewport", () => {
 		await expect(
 			helper.sizeWindowForViewport(page, { width: 1440, height: 900 }),
 		).rejects.toThrow(/got 1490×900\); the display may be too small/);
+	});
+});
+
+describe("maximizeWindow", () => {
+	/** A fake page + CDP session whose window grows to `maxInner` once maximized. */
+	function fakeMaximizable(opts: {
+		startState?: string;
+		staleReads?: number;
+		failOn?: string;
+		hangOn?: string;
+	}) {
+		const normal = { outerW: 1000, outerH: 700 };
+		const maxed = { outerW: 1920, outerH: 1040 };
+		const chrome = { w: 16, h: 130 };
+		let windowState = opts.startState ?? "normal";
+		let staleLeft = 0;
+		let detached = 0;
+		const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
+		const cdp = {
+			send: async (method: string, params: Record<string, unknown> = {}) => {
+				sent.push({ method, params });
+				if (method === opts.hangOn) {
+					return new Promise(() => undefined);
+				}
+				if (method === opts.failOn) {
+					throw new Error(`${method} failed`);
+				}
+				if (method === "Browser.getWindowForTarget") {
+					return { windowId: 7, bounds: { windowState } };
+				}
+				const bounds = params.bounds as { windowState?: string };
+				if (bounds.windowState) {
+					windowState = bounds.windowState;
+					staleLeft = opts.staleReads ?? 0;
+				}
+				return {};
+			},
+			detach: async () => {
+				detached += 1;
+			},
+		};
+		const page = {
+			context: () => ({ newCDPSession: async () => cdp }),
+			evaluate: async () => {
+				// Stale reads keep returning the pre-maximize size, like a resize landing late.
+				const view = windowState === "maximized" && staleLeft === 0 ? maxed : normal;
+				if (staleLeft > 0) {
+					staleLeft -= 1;
+				}
+				return {
+					outerWidth: view.outerW,
+					outerHeight: view.outerH,
+					innerWidth: view.outerW - chrome.w,
+					innerHeight: view.outerH - chrome.h,
+				};
+			},
+		};
+		return { page, sent, detached: () => detached };
+	}
+
+	const boundsCalls = (sent: Array<{ method: string; params: Record<string, unknown> }>) =>
+		sent.filter((call) => call.method === "Browser.setWindowBounds");
+
+	it("sets the window state to maximized and returns the settled inner size", async () => {
+		const { page, sent, detached } = fakeMaximizable({});
+		await expect(helper.maximizeWindow(page)).resolves.toEqual({ width: 1904, height: 910 });
+		expect(boundsCalls(sent)).toEqual([
+			{
+				method: "Browser.setWindowBounds",
+				params: { windowId: 7, bounds: { windowState: "maximized" } },
+			},
+		]);
+		expect(detached()).toBe(1);
+	});
+
+	it("waits for the maximize to settle before measuring", async () => {
+		const { page } = fakeMaximizable({ staleReads: 1 });
+		await expect(helper.maximizeWindow(page)).resolves.toEqual({ width: 1904, height: 910 });
+	});
+
+	it("only measures when the window is already maximized", async () => {
+		const { page, sent, detached } = fakeMaximizable({ startState: "maximized" });
+		await expect(helper.maximizeWindow(page)).resolves.toEqual({ width: 1904, height: 910 });
+		expect(boundsCalls(sent)).toHaveLength(0);
+		expect(detached()).toBe(1);
+	});
+
+	it("detaches the CDP session when maximizing fails", async () => {
+		const { page, detached } = fakeMaximizable({ failOn: "Browser.setWindowBounds" });
+		await expect(helper.maximizeWindow(page)).rejects.toThrow(/setWindowBounds failed/);
+		expect(detached()).toBe(1);
+	});
+
+	it("times out instead of hanging, and still detaches", async () => {
+		const { page, detached } = fakeMaximizable({ hangOn: "Browser.setWindowBounds" });
+		await expect(helper.maximizeWindow(page, { timeoutMs: 50 })).rejects.toThrow(
+			/Couldn't maximize the browser window within 50 ms/,
+		);
+		expect(detached()).toBe(1);
 	});
 });
 

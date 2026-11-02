@@ -6,7 +6,7 @@
  * drawn cursor should land on each button. If it is consistently off, pass --offset-x/--offset-y
  * (screen DIP, added to every mapped point) and record again.
  *
- *   node calibrate.cjs [--offset-x <n>] [--offset-y <n>] [--headless]
+ *   node calibrate.cjs [--offset-x <n>] [--offset-y <n>] [--maximized] [--headless]
  */
 
 const fs = require("node:fs");
@@ -17,6 +17,7 @@ const { chromium } = require("playwright");
 const {
 	connect,
 	glideClick,
+	maximizeWindow,
 	openAppPage,
 	sizeWindowForViewport,
 } = require("./recordly-playwright.cjs");
@@ -25,7 +26,7 @@ const VIEWPORT = { width: 1440, height: 900 };
 const BUTTONS = ["#top-left", "#top-right", "#bottom-right", "#bottom-left", "#center"];
 
 function parseArgs(argv) {
-	const options = { offsetX: 0, offsetY: 0, headless: false };
+	const options = { offsetX: 0, offsetY: 0, headless: false, maximized: false };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--offset-x" || arg === "--offset-y") {
@@ -34,6 +35,9 @@ function parseArgs(argv) {
 				throw new Error(`${arg} needs a number`);
 			}
 			options[arg === "--offset-x" ? "offsetX" : "offsetY"] = value;
+		} else if (arg === "--maximized") {
+			// Maximize the window instead of sizing it to the default 1440x900 viewport.
+			options.maximized = true;
 		} else if (arg === "--headless") {
 			// For dry runs against a fake server; Recordly can't capture a headless window.
 			options.headless = true;
@@ -67,7 +71,9 @@ async function main() {
 	let failure;
 	try {
 		const page = await openAppPage(context, url);
-		const viewport = await sizeWindowForViewport(page, VIEWPORT);
+		const viewport = options.maximized
+			? await maximizeWindow(page)
+			: await sizeWindowForViewport(page, VIEWPORT);
 		console.log(`viewport: ${viewport.width}x${viewport.height}`);
 
 		await recordly.start({

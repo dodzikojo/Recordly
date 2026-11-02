@@ -522,6 +522,45 @@ async function sizeWindowForViewport(page, { width, height }) {
 	}
 }
 
+/**
+ * Maximizes the browser window and resolves to the settled page viewport { width, height }. Uses the
+ * same CDP window control as sizeWindowForViewport; an already-maximized window is only measured.
+ * Bounded by timeoutMs (default 5 s) so a stuck window manager can't hang a script. Cursor mapping
+ * reads live window metrics per event, so a maximized window needs no special handling there.
+ */
+async function maximizeWindow(page, { timeoutMs = 5000 } = {}) {
+	const cdp = await page.context().newCDPSession(page);
+	let timer;
+	try {
+		const work = (async () => {
+			const { windowId, bounds } = await cdp.send("Browser.getWindowForTarget");
+			if (!bounds || bounds.windowState !== "maximized") {
+				await cdp.send("Browser.setWindowBounds", {
+					windowId,
+					bounds: { windowState: "maximized" },
+				});
+			}
+			const settled = await measureSettledWindow(page);
+			return { width: settled.innerWidth, height: settled.innerHeight };
+		})();
+		// If the timeout wins, the abandoned work must not surface as an unhandled rejection.
+		work.catch(() => undefined);
+		const timeout = new Promise((_, reject) => {
+			timer = setTimeout(
+				() =>
+					reject(
+						new Error(`Couldn't maximize the browser window within ${timeoutMs} ms`),
+					),
+				timeoutMs,
+			);
+		});
+		return await Promise.race([work, timeout]);
+	} finally {
+		clearTimeout(timer);
+		await cdp.detach().catch(() => undefined);
+	}
+}
+
 // --- Gliding mouse -----------------------------------------------------------------------------
 
 const lastMousePosition = new WeakMap();
@@ -681,4 +720,5 @@ module.exports = {
 	openAppPage,
 	pageEventToScreen,
 	sizeWindowForViewport,
+	maximizeWindow,
 };
