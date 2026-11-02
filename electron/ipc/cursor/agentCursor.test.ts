@@ -25,7 +25,6 @@ import {
 	lastAgentCursorEventAtMs,
 	setActiveCursorSamples,
 	setAgentCursorTakeActive,
-	setAgentCursorTimeLeadMs,
 	setCursorCaptureStartTimeMs,
 	setIsCursorCaptureActive,
 	setLastAgentCursorEventAtMs,
@@ -39,7 +38,11 @@ import {
 	MAX_AGENT_CURSOR_BATCH,
 	mapCssCursorToVisualType,
 } from "./agentCursor";
-import { pauseCursorCapture, resetCursorCaptureClock } from "./telemetry";
+import {
+	pauseCursorCapture,
+	pauseCursorCaptureAtBoundary,
+	resetCursorCaptureClock,
+} from "./telemetry";
 
 function lastSample() {
 	return activeCursorSamples[activeCursorSamples.length - 1];
@@ -74,20 +77,31 @@ describe("ingestAgentCursorEvents", () => {
 		setCursorCaptureStartTimeMs(10_000);
 		setIsCursorCaptureActive(true);
 		setAgentCursorTakeActive(true);
-		setAgentCursorTimeLeadMs(0);
 	});
 
-	it("shifts event times by the native-start lead so they line up with the video", () => {
-		setAgentCursorTimeLeadMs(900);
+	it("stamps events on the video timeline when the clock is backdated by the lead", () => {
+		// The handler backdates the clock: wall start 10_000, native lead 900.
+		setCursorCaptureStartTimeMs(10_000 - computeAgentCursorTimeLeadMs(10_000, 9_100));
 		ingestAgentCursorEvents([{ atMs: 10_250, x: 500, y: 250, kind: "move" }]);
 		expect(lastSample().timeMs).toBe(1_150);
 		// Ordering still uses the raw atMs.
 		expect(lastAgentCursorEventAtMs).toBe(10_250);
 	});
 
-	it("leaves event times unshifted with a zero lead", () => {
-		ingestAgentCursorEvents([{ atMs: 10_250, x: 500, y: 250, kind: "move" }]);
-		expect(lastSample().timeMs).toBe(250);
+	it("keeps events inside the lead window when pausing, and still rejects while paused", () => {
+		setCursorCaptureStartTimeMs(9_100);
+		ingestAgentCursorEvents([
+			{ atMs: 10_400, x: 100, y: 100, kind: "down" },
+			{ atMs: 10_500, x: 100, y: 100, kind: "up" },
+		]);
+		expect(activeCursorSamples.map((sample) => sample.timeMs)).toEqual([1_300, 1_400]);
+
+		pauseCursorCaptureAtBoundary(10_550);
+		expect(activeCursorSamples.map((sample) => sample.timeMs)).toEqual([1_300, 1_400]);
+
+		const result = ingestAgentCursorEvents([{ atMs: 10_700, x: 10, y: 10, kind: "move" }]);
+		expect(result.rejected).toEqual([{ index: 0, reason: "paused" }]);
+		expect(activeCursorSamples).toHaveLength(2);
 	});
 
 	it("ingests a move", () => {

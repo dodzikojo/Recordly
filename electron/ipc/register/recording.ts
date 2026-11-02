@@ -88,7 +88,6 @@ import {
 	cachedSystemCursorAssets,
 	cachedSystemCursorAssetsSourceMtimeMs,
 	currentVideoPath,
-	cursorCaptureStartTimeMs,
 	ffmpegCaptureOutputBuffer,
 	ffmpegCaptureProcess,
 	ffmpegCaptureTargetPath,
@@ -105,7 +104,6 @@ import {
 	selectedSource,
 	setActiveCursorSamples,
 	setAgentCursorTakeActive,
-	setAgentCursorTimeLeadMs,
 	setCachedSystemCursorAssets,
 	setCachedSystemCursorAssetsSourceMtimeMs,
 	setCursorCaptureStartTimeMs,
@@ -1846,17 +1844,20 @@ export function registerRecordingHandlers(
 			setIsCursorCaptureActive(true);
 			setActiveCursorSamples([]);
 			setPendingCursorSamples([]);
-			setCursorCaptureStartTimeMs(Date.now());
+			// Agent-driven takes: the video's t=0 is the native helper's capture start, which precedes
+			// this call. Backdating the cursor clock by that lead keeps every elapsed-time reader
+			// (event stamps, pause boundary, resume) on the video's timeline. Human takes: unchanged.
+			const cursorClockStartMs = Date.now();
+			setCursorCaptureStartTimeMs(
+				agentCursorTakeActive
+					? cursorClockStartMs -
+							computeAgentCursorTimeLeadMs(cursorClockStartMs, nativeCaptureStartedAtMs)
+					: cursorClockStartMs,
+			);
 			resetCursorCaptureClock();
 			setLinuxCursorScreenPoint(null);
 			setLastLeftClick(null);
 			setLastAgentCursorEventAtMs(null);
-			// Agent-driven takes only: align injected event times with the video's t=0.
-			if (agentCursorTakeActive) {
-				setAgentCursorTimeLeadMs(
-					computeAgentCursorTimeLeadMs(cursorCaptureStartTimeMs, nativeCaptureStartedAtMs),
-				);
-			}
 			if (!agentCursorTakeActive) {
 				sampleCursorPoint();
 				startCursorSampling();
@@ -1875,7 +1876,6 @@ export function registerRecordingHandlers(
 			setActiveCursorSamples([]);
 			setAgentCursorTakeActive(false);
 			setLastAgentCursorEventAtMs(null);
-			setAgentCursorTimeLeadMs(0);
 			setNativeCaptureStartedAtMs(null);
 		}
 
