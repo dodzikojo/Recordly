@@ -1,4 +1,10 @@
 {
+	"gap": {
+		"shortLabel": "Gat",
+		"label": "Gat {{start}}–{{end}} s",
+		"close": "Gat sluiten",
+		"closeAll": "Alle gaten sluiten"
+	},
 	"zoom": {
 		"cannotPlace": "Kan zoom hier niet plaatsen",
 		"existsOrNoSpace": "Er bestaat al een zoom op deze locatie of er is niet genoeg ruimte beschikbaar.",

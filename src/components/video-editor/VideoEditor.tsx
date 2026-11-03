@@ -92,6 +92,12 @@ import {
 } from "@/utils/aspectRatioUtils";
 import { planClipSpeedChange } from "./clipSpeedChange";
 import { mapTimelineRegionsToSource, planRippleClipDelete } from "./rippleDelete";
+import {
+	findTimelineGaps,
+	planCloseTimelineGaps,
+	resolveGapClosureSourceTime,
+	type TimelineGap,
+} from "./closeGaps";
 import { ExtensionIcon } from "./ExtensionIcon";
 import {
 	calculateMp4ExportDimensions,
@@ -573,12 +579,36 @@ export default function VideoEditor() {
 	const [trimRegions, setTrimRegions] = useState<TrimRegion[]>([]);
 	const [clipRegions, setClipRegions] = useState<ClipRegion[]>([]);
 	const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+	const [selectedGap, setSelectedGap] = useState<TimelineGap | null>(null);
+	const timelineGaps = useMemo(() => findTimelineGaps(clipRegions), [clipRegions]);
 	const [speedRegions, setSpeedRegions] = useState<SpeedRegion[]>([]);
 	const [annotationRegions, setAnnotationRegions] = useState<AnnotationRegion[]>([]);
 	const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
 	const [audioRegions, setAudioRegions] = useState<AudioRegion[]>([]);
 	const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
 	const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
+	useEffect(() => {
+		setSelectedGap((previous) =>
+			previous &&
+			!selectedClipId &&
+			!selectedZoomId &&
+			!selectedAnnotationId &&
+			!selectedAudioId &&
+			!selectedCaptionId &&
+			timelineGaps.some(
+				(gap) => gap.startMs === previous.startMs && gap.endMs === previous.endMs,
+			)
+				? previous
+				: null,
+		);
+	}, [
+		timelineGaps,
+		selectedClipId,
+		selectedZoomId,
+		selectedAnnotationId,
+		selectedAudioId,
+		selectedCaptionId,
+	]);
 	const [sourceAudioTrackSettingsByClip, setSourceAudioTrackSettingsByClip] = useState<
 		Record<string, SourceAudioTrackSettings>
 	>({});
@@ -2012,6 +2042,7 @@ export default function VideoEditor() {
 	]);
 
 	const applyHistorySnapshot = useCallback((snapshot: EditorHistorySnapshot) => {
+		setSelectedGap(null);
 		applyingHistoryRef.current = true;
 		const cloned = cloneStructured(snapshot);
 		setZoomRegions(cloned.zoomRegions);
@@ -2198,6 +2229,7 @@ export default function VideoEditor() {
 
 			setSelectedZoomId(null);
 			setSelectedClipId(null);
+			setSelectedGap(null);
 			setSelectedAnnotationId(null);
 			setSelectedAudioId(null);
 
@@ -2364,6 +2396,7 @@ export default function VideoEditor() {
 		setAutoCaptionSettings((prev) => ({ ...prev, enabled: false }));
 		setSelectedZoomId(null);
 		setSelectedClipId(null);
+		setSelectedGap(null);
 		setSelectedAnnotationId(null);
 		setSelectedAudioId(null);
 		nextZoomIdRef.current = 1;
@@ -3840,6 +3873,7 @@ export default function VideoEditor() {
 
 	const handleSelectCaption = useCallback(
 		(id: string | null) => {
+			if (id) setSelectedGap(null);
 			setSelectedCaptionId(id);
 			if (!id) {
 				setActiveEffectSection((section) => (section === "caption" ? "scene" : section));
@@ -3957,6 +3991,7 @@ export default function VideoEditor() {
 	}, [handleSeek, timelineDuration, timelinePlayheadTime]);
 
 	const handleSelectZoom = useCallback((id: string | null) => {
+		if (id) setSelectedGap(null);
 		setSelectedZoomId(id);
 		if (id) {
 			setActiveEffectSection("zoom");
@@ -3969,6 +4004,7 @@ export default function VideoEditor() {
 	}, []);
 
 	const handleSelectAnnotation = useCallback((id: string | null) => {
+		if (id) setSelectedGap(null);
 		setSelectedAnnotationId(id);
 		if (id) {
 			setSelectedZoomId(null);
@@ -4202,6 +4238,7 @@ export default function VideoEditor() {
 	);
 
 	const handleSelectClip = useCallback((id: string | null) => {
+		if (id) setSelectedGap(null);
 		setSelectedClipId(id);
 		if (id) {
 			setActiveEffectSection("clip");
@@ -4213,6 +4250,45 @@ export default function VideoEditor() {
 			setActiveEffectSection((s) => (s === "clip" ? "scene" : s));
 		}
 	}, []);
+
+	const handleSelectGap = useCallback((gap: TimelineGap | null) => {
+		setSelectedGap(gap);
+		if (!gap) return;
+		setSelectedClipId(null);
+		setSelectedZoomId(null);
+		setSelectedAnnotationId(null);
+		setSelectedAudioId(null);
+		setSelectedCaptionId(null);
+		setActiveEffectSection("scene");
+	}, []);
+
+	const handleCloseGaps = useCallback(
+		(gap?: TimelineGap) => {
+			const plan = planCloseTimelineGaps(buildHistorySnapshot(), gap);
+			if (!plan) {
+				setSelectedGap(null);
+				return;
+			}
+			const playback = videoPlaybackRef.current;
+			playback?.pause();
+			playback?.cancelCaptionEdit();
+			// Keep a retained raw frame, otherwise park inside the nearest retained clip.
+			const sourceTime = (playback?.video?.currentTime ?? currentTime) * 1000;
+			const targetTime = resolveGapClosureSourceTime(sourceTime, plan.clipRegions) / 1000;
+			if (playback?.video && targetTime !== playback.video.currentTime) {
+				playback.video.currentTime = targetTime;
+			}
+			setCurrentTime(targetTime);
+			// React batches every affected lane into one history transaction.
+			setClipRegions(plan.clipRegions);
+			setZoomRegions(plan.zoomRegions);
+			setAnnotationRegions(plan.annotationRegions);
+			setAudioRegions(plan.audioRegions);
+			setSelectedGap(null);
+			setPreviewSeekVersion((version) => version + 1);
+		},
+		[buildHistorySnapshot, currentTime],
+	);
 
 	const handleClipSplit = useCallback(
 		(splitMs: number) => {
@@ -4403,6 +4479,7 @@ export default function VideoEditor() {
 	);
 
 	const handleSelectAudio = useCallback((id: string | null) => {
+		if (id) setSelectedGap(null);
 		setSelectedAudioId(id);
 		if (id) {
 			setSelectedZoomId(null);
@@ -6916,6 +6993,24 @@ export default function VideoEditor() {
 								>
 									<Scissors className="w-4 h-4" />
 								</Button>
+								<Button
+									onClick={() => selectedGap && handleCloseGaps(selectedGap)}
+									disabled={!selectedGap}
+									variant="ghost"
+									size="sm"
+									className="h-7 px-2 text-xs text-muted-foreground"
+								>
+									{t("timeline.gap.close")}
+								</Button>
+								<Button
+									onClick={() => handleCloseGaps()}
+									disabled={timelineGaps.length === 0}
+									variant="ghost"
+									size="sm"
+									className="h-7 px-2 text-xs text-muted-foreground"
+								>
+									{t("timeline.gap.closeAll")}
+								</Button>
 							</div>
 							{/* Playback controls - centered */}
 							<div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
@@ -7051,6 +7146,9 @@ export default function VideoEditor() {
 						onSelectZoom={handleSelectZoom}
 						trimRegions={trimRegions}
 						clipRegions={clipRegions}
+						selectedGap={selectedGap}
+						onSelectGap={handleSelectGap}
+						onCloseGap={handleCloseGaps}
 						onClipSplit={handleClipSplit}
 						onClipSpanChange={handleClipSpanChange}
 						onClipDelete={handleClipDelete}

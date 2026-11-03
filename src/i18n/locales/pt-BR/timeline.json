@@ -1,4 +1,10 @@
 {
+	"gap": {
+		"shortLabel": "Lacuna",
+		"label": "Lacuna {{start}}–{{end}} s",
+		"close": "Fechar lacuna",
+		"closeAll": "Fechar todas as lacunas"
+	},
 	"zoom": {
 		"cannotPlace": "Não é possível inserir zoom aqui",
 		"existsOrNoSpace": "Já existe zoom nesse local ou não há espaço suficiente.",

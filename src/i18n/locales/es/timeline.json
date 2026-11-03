@@ -1,4 +1,10 @@
 {
+	"gap": {
+		"shortLabel": "Hueco",
+		"label": "Hueco {{start}}–{{end}} s",
+		"close": "Cerrar hueco",
+		"closeAll": "Cerrar todos los huecos"
+	},
 	"zoom": {
 		"cannotPlace": "No se puede colocar zoom aquí",
 		"existsOrNoSpace": "Ya existe un zoom en esta ubicación o no hay suficiente espacio.",

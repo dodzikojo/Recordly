@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { resolveDeleteSelectionTarget } from "./timelineSelectionUtils";
+import {
+	isTimelineShortcutTargetBlocked,
+	resolveDeleteSelectionTarget,
+} from "./timelineSelectionUtils";
 
 describe("timelineSelectionUtils", () => {
+	it("closes a selected gap before any stale item selection", () => {
+		expect(
+			resolveDeleteSelectionTarget({
+				selectAllBlocksActive: true,
+				selectedKeyframeId: "old",
+				selectedZoomId: "old",
+				selectedGap: { startMs: 1000, endMs: 2000 },
+			}),
+		).toBe("gap");
+	});
+
+	it("protects editable controls and dialogs from timeline shortcuts", () => {
+		const target = (matches: boolean) =>
+			({ closest: () => (matches ? {} : null) }) as unknown as Element;
+		expect(isTimelineShortcutTargetBlocked(target(true))).toBe(true);
+		expect(isTimelineShortcutTargetBlocked(target(false))).toBe(false);
+		expect(isTimelineShortcutTargetBlocked(null)).toBe(false);
+	});
 	it("treats zoom select-all as a zoom deletion target", () => {
 		expect(
 			resolveDeleteSelectionTarget({

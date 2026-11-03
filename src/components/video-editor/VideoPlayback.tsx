@@ -2262,6 +2262,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			video.addEventListener("ended", handlePause);
 			video.addEventListener("seeked", handleSeeked);
 			video.addEventListener("seeking", handleSeeking);
+			// Metadata/initial seek can finish before Pixi attaches these listeners.
+			// Validate the parked frame on mount as well as on later seek events.
+			handleSeeked();
 
 			return () => {
 				video.removeEventListener("play", handlePlay);

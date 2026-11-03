@@ -1,4 +1,10 @@
 {
+	"gap": {
+		"shortLabel": "간격",
+		"label": "간격 {{start}}–{{end}}초",
+		"close": "간격 닫기",
+		"closeAll": "모든 간격 닫기"
+	},
 	"zoom": {
 		"cannotPlace": "여기에는 확대를 배치할 수 없습니다",
 		"existsOrNoSpace": "이 위치에는 이미 확대가 있거나 사용할 수 있는 공간이 부족합니다.",

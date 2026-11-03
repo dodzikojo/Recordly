@@ -1,4 +1,10 @@
 {
+	"gap": {
+		"shortLabel": "間隙",
+		"label": "間隙 {{start}}–{{end}} 秒",
+		"close": "關閉間隙",
+		"closeAll": "關閉所有間隙"
+	},
 	"zoom": {
 		"cannotPlace": "無法在此處新增縮放",
 		"existsOrNoSpace": "此位置已存在縮放，或可用空間不足。",

@@ -1,6 +1,7 @@
 import type { Span } from "dnd-timeline";
 import type { ForwardedRef, RefObject } from "react";
 import { useCallback, useImperativeHandle } from "react";
+import type { TimelineGap } from "../../closeGaps";
 import type {
 	AnnotationRegion,
 	AudioRegion,
@@ -42,6 +43,9 @@ interface UseTimelineEditorRuntimeParams {
 	trimRegions: TrimRegion[];
 	onTrimSpanChange?: (id: string, span: Span) => void;
 	clipRegions: ClipRegion[];
+	selectedGap?: TimelineGap | null;
+	onSelectGap?: (gap: TimelineGap | null) => void;
+	onCloseGap?: (gap: TimelineGap) => void;
 	onClipSplit?: (splitMs: number) => void;
 	onClipSpanChange?: (id: string, span: Span) => void;
 	onClipDelete?: (id: string) => void;
@@ -92,6 +96,9 @@ export function useTimelineEditorRuntime({
 	trimRegions,
 	onTrimSpanChange,
 	clipRegions,
+	selectedGap,
+	onSelectGap,
+	onCloseGap,
 	onClipSplit,
 	onClipSpanChange,
 	onClipDelete,
@@ -140,6 +147,7 @@ export function useTimelineEditorRuntime({
 		clearSelectedBlocks,
 		handleSelectZoom,
 		handleSelectClip,
+		handleSelectGap,
 		handleSelectAnnotation,
 		handleSelectAudio,
 		handleSelectCaption,
@@ -163,6 +171,7 @@ export function useTimelineEditorRuntime({
 		onCaptionDelete,
 		onSelectZoom,
 		onSelectClip,
+		onSelectGap,
 		onSelectAnnotation,
 		onSelectAudio,
 		onSelectCaption,
@@ -270,6 +279,11 @@ export function useTimelineEditorRuntime({
 		selectedKeyframeId,
 		selectedZoomId,
 		selectedClipId,
+		selectedGap,
+		closeSelectedGap: () => {
+			if (selectedGap) onCloseGap?.(selectedGap);
+		},
+		clearSelectedGap: () => onSelectGap?.(null),
 		selectedAnnotationId,
 		selectedAudioId,
 		selectedCaptionId,
@@ -317,6 +331,7 @@ export function useTimelineEditorRuntime({
 		clearSelectedBlocks,
 		handleSelectZoom,
 		handleSelectClip,
+		handleSelectGap,
 		handleSelectAnnotation,
 		handleSelectAudio,
 		handleSelectCaption,

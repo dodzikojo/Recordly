@@ -7,6 +7,7 @@ import type {
 } from "@/components/video-editor/audio/audioTypes";
 import { useScopedT } from "@/contexts/I18nContext";
 import { useShortcuts } from "@/contexts/ShortcutsContext";
+import type { TimelineGap } from "../closeGaps";
 import { fromFileUrl } from "../projectPersistence";
 import type {
 	AnnotationRegion,
@@ -50,6 +51,9 @@ export interface TimelineEditorProps {
 	trimRegions?: TrimRegion[];
 	onTrimSpanChange?: (id: string, span: Span) => void;
 	clipRegions?: ClipRegion[];
+	selectedGap?: TimelineGap | null;
+	onSelectGap?: (gap: TimelineGap | null) => void;
+	onCloseGap?: (gap: TimelineGap) => void;
 	onClipSplit?: (splitMs: number) => void;
 	onClipSpanChange?: (id: string, span: Span) => void;
 	onClipDelete?: (id: string) => void;
@@ -133,6 +137,9 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			trimRegions = [],
 			onTrimSpanChange,
 			clipRegions = [],
+			selectedGap,
+			onSelectGap,
+			onCloseGap,
 			onClipSplit,
 			onClipSpanChange,
 			onClipDelete,
@@ -339,6 +346,7 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			clearSelectedBlocks,
 			handleSelectZoom,
 			handleSelectClip,
+			handleSelectGap,
 			handleSelectAnnotation,
 			handleSelectAudio,
 			handleSelectCaption,
@@ -372,6 +380,9 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			trimRegions,
 			onTrimSpanChange,
 			clipRegions,
+			selectedGap,
+			onSelectGap,
+			onCloseGap,
 			onClipSplit,
 			onClipSpanChange,
 			onClipDelete,
@@ -474,13 +485,20 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 						<KeyframeMarkers
 							keyframes={keyframes}
 							selectedKeyframeId={selectedKeyframeId}
-							setSelectedKeyframeId={setSelectedKeyframeId}
+							setSelectedKeyframeId={(id) => {
+								if (id) onSelectGap?.(null);
+								setSelectedKeyframeId(id);
+							}}
 							onKeyframeMove={handleKeyframeMove}
 							videoDurationMs={totalMs}
 							timelineRef={timelineContainerRef}
 						/>
 						<TimelineCanvas
 							items={timelineItems}
+							clipRegions={clipRegions}
+							selectedGap={selectedGap}
+							onSelectGap={handleSelectGap}
+							onCloseGap={onCloseGap}
 							videoDurationMs={totalMs}
 							currentTimeMs={currentTimeMs}
 							onSeek={onSeek}

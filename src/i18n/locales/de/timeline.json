@@ -1,4 +1,10 @@
 {
+	"gap": {
+		"shortLabel": "Lücke",
+		"label": "Lücke {{start}}–{{end}} s",
+		"close": "Lücke schließen",
+		"closeAll": "Alle Lücken schließen"
+	},
     "zoom": {
         "cannotPlace": "Zoom kann hier nicht platziert werden",
         "existsOrNoSpace": "Zoom existiert bereits an dieser Stelle oder es ist nicht genügend Platz verfügbar.",
