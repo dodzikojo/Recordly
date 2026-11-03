@@ -4,7 +4,9 @@
 		"pause": "暫停",
 		"skipBack": "後退",
 		"skipForward": "前進",
-		"muteUnmute": "靜音/取消靜音"
+		"muteUnmute": "靜音/取消靜音",
+		"editedPosition": "剪輯後影片中的位置（時間軸 {{time}}）",
+		"editedLength": "剪輯與變速後的長度（時間軸結束於 {{time}}）"
 	},
 	"annotations": {
 		"settings": "註釋設定",

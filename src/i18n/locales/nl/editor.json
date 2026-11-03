@@ -4,7 +4,9 @@
 		"pause": "Pauzeren",
 		"skipBack": "Terug springen",
 		"skipForward": "Vooruit springen",
-		"muteUnmute": "Dempen/dempen opheffen"
+		"muteUnmute": "Dempen/dempen opheffen",
+		"editedPosition": "Positie in de bewerkte video (tijdlijn {{time}})",
+		"editedLength": "Lengte na knippen en snelheidswijzigingen (de tijdlijn eindigt op {{time}})"
 	},
 	"annotations": {
 		"settings": "Annotatie-instellingen",

@@ -4,7 +4,9 @@
 		"pause": "Pause",
 		"skipBack": "Skip Back",
 		"skipForward": "Skip Forward",
-		"muteUnmute": "Mute/Unmute"
+		"muteUnmute": "Mute/Unmute",
+		"editedPosition": "Position in the edited video (timeline {{time}})",
+		"editedLength": "Length after cuts and speed changes (the timeline ends at {{time}})"
 	},
 	"annotations": {
 		"settings": "Annotation Settings",

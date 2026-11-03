@@ -227,7 +227,9 @@ import {
 	extendAutoFullTrackClip,
 	type FigureData,
 	getClipSourceEndMs,
+	getEditedDurationMs,
 	getTimelineDurationMs,
+	mapTimelineTimeToEditedTime,
 	type Padding,
 	mapSourceTimeToTimelineTime as resolveSourceTimeToTimelineTime,
 	mapTimelineTimeToSourceTime as resolveTimelineTimeToSourceTime,
@@ -3684,6 +3686,15 @@ export default function VideoEditor() {
 		() => getTimelineDurationMs(clipRegions, duration * 1000) / 1000,
 		[clipRegions, duration],
 	);
+	// The playback readout shows edited time: gaps between clips are cut from the export.
+	const editedPlayheadTime = useMemo(
+		() => mapTimelineTimeToEditedTime(timelinePlayheadTime * 1000, clipRegions) / 1000,
+		[timelinePlayheadTime, clipRegions],
+	);
+	const editedDuration = useMemo(
+		() => getEditedDurationMs(clipRegions, duration * 1000) / 1000,
+		[clipRegions, duration],
+	);
 
 	// Merge clip speeds into speed regions so playback + export respect per-clip speed
 	const effectiveSpeedRegions = useMemo<SpeedRegion[]>(() => {
@@ -6852,8 +6863,13 @@ export default function VideoEditor() {
 							{/* Playback controls - centered */}
 							<div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
 								<div className="flex items-center gap-1.5 pointer-events-auto">
-									<span className="mr-1 text-[10px] font-medium tabular-nums text-muted-foreground">
-										{formatTime(timelinePlayheadTime)}
+									<span
+										className="mr-1 text-[10px] font-medium tabular-nums text-muted-foreground"
+										title={t("editor.playback.editedPosition", undefined, {
+											time: formatTime(timelinePlayheadTime),
+										})}
+									>
+										{formatTime(editedPlayheadTime)}
 									</span>
 									<Button
 										variant="ghost"
@@ -6886,8 +6902,13 @@ export default function VideoEditor() {
 									>
 										<SkipForward className="w-3.5 h-3.5" weight="fill" />
 									</Button>
-									<span className="text-[10px] font-medium text-muted-foreground/70 tabular-nums ml-1">
-										{formatTime(timelineDuration)}
+									<span
+										className="text-[10px] font-medium text-muted-foreground/70 tabular-nums ml-1"
+										title={t("editor.playback.editedLength", undefined, {
+											time: formatTime(timelineDuration),
+										})}
+									>
+										{formatTime(editedDuration)}
 									</span>
 								</div>
 							</div>

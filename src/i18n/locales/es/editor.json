@@ -4,7 +4,9 @@
 		"pause": "Pausar",
 		"skipBack": "Retroceder",
 		"skipForward": "Avanzar",
-		"muteUnmute": "Silenciar/activar sonido"
+		"muteUnmute": "Silenciar/activar sonido",
+		"editedPosition": "Posición en el vídeo editado (línea de tiempo {{time}})",
+		"editedLength": "Duración tras cortes y cambios de velocidad (la línea de tiempo termina en {{time}})"
 	},
 	"annotations": {
 		"settings": "Configuración de anotaciones",

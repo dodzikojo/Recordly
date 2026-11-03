@@ -4,7 +4,9 @@
 		"pause": "Pausa",
 		"skipBack": "Indietro",
 		"skipForward": "Avanti",
-		"muteUnmute": "Disattiva/Attiva audio"
+		"muteUnmute": "Disattiva/Attiva audio",
+		"editedPosition": "Posizione nel video montato (timeline {{time}})",
+		"editedLength": "Durata dopo tagli e cambi di velocità (la timeline termina a {{time}})"
 	},
 	"annotations": {
 		"settings": "Impostazioni annotazione",

@@ -4,7 +4,9 @@ import { deriveNextId } from "./projectPersistence";
 import {
 	extendAutoFullTrackClip,
 	findClipAtTimelineTime,
+	getEditedDurationMs,
 	getTimelineDurationMs,
+	mapTimelineTimeToEditedTime,
 	mapSourceTimeToTimelineTime,
 	mapTimelineTimeToSourceTime,
 	trimsToClips,
@@ -156,6 +158,51 @@ describe("clip timeline mapping", () => {
 
 		expect(clipsFromTrims.map((clip) => clip.id)).toEqual(["clip-1", "clip-2", "clip-3"]);
 		expect(deriveNextId("clip", clipsFromTrims.map((clip) => clip.id))).toBe(4);
+	});
+});
+
+describe("edited time (what the export will contain)", () => {
+	const clips = [
+		{ id: "clip-1", startMs: 0, endMs: 4_000, speed: 1 },
+		{ id: "clip-2", startMs: 6_000, endMs: 8_000, speed: 2 },
+	];
+
+	it("adds up the kept clips, leaving out the gaps between them", () => {
+		expect(getEditedDurationMs(clips, 10_000)).toBe(6_000);
+	});
+
+	it("counts a sped-up clip at its played length", () => {
+		expect(
+			getEditedDurationMs(
+				[
+					{ id: "clip-10", startMs: 0, endMs: 1_900, speed: 10 },
+					{ id: "clip-11", startMs: 19_200, endMs: 55_205, speed: 1 },
+				],
+				55_205,
+			),
+		).toBe(37_905);
+	});
+
+	it("does not depend on the clips' order", () => {
+		expect(getEditedDurationMs([...clips].reverse(), 10_000)).toBe(6_000);
+	});
+
+	it("uses the source duration before any clip exists", () => {
+		expect(getEditedDurationMs([], 10_000.4)).toBe(10_000);
+	});
+
+	it("maps the playhead to its position in the edited video", () => {
+		expect(mapTimelineTimeToEditedTime(1_500, clips)).toBe(1_500);
+		expect(mapTimelineTimeToEditedTime(7_000, clips)).toBe(5_000);
+	});
+
+	it("holds a playhead in a gap at the end of the clips before it", () => {
+		expect(mapTimelineTimeToEditedTime(5_000, clips)).toBe(4_000);
+		expect(mapTimelineTimeToEditedTime(9_000, clips)).toBe(6_000);
+	});
+
+	it("leaves the time unchanged before any clip exists", () => {
+		expect(mapTimelineTimeToEditedTime(2_500, [])).toBe(2_500);
 	});
 });
 

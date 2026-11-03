@@ -4,7 +4,9 @@
 		"pause": "일시 정지",
 		"skipBack": "뒤로 건너뛰기",
 		"skipForward": "앞으로 건너뛰기",
-		"muteUnmute": "음소거/해제"
+		"muteUnmute": "음소거/해제",
+		"editedPosition": "편집된 영상에서의 위치 (타임라인 {{time}})",
+		"editedLength": "자르기 및 속도 변경 후 길이 (타임라인 끝: {{time}})"
 	},
 	"annotations": {
 		"settings": "주석 설정",
