@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { TimelineGap } from "../../closeGaps";
+import type { ClipSelectionModifiers } from "../../clipBatchEditing";
 import type { TimelineRegion } from "../core/timelineTypes";
 
 interface UseTimelineSelectionParams {
@@ -20,7 +21,7 @@ interface UseTimelineSelectionParams {
 	onAudioDelete?: (id: string) => void;
 	onCaptionDelete?: (id: string) => void;
 	onSelectZoom: (id: string | null) => void;
-	onSelectClip?: (id: string | null) => void;
+	onSelectClip?: (id: string | null, modifiers?: ClipSelectionModifiers) => void;
 	onSelectGap?: (gap: TimelineGap | null) => void;
 	onSelectAnnotation?: (id: string | null) => void;
 	onSelectAudio?: (id: string | null) => void;
@@ -185,9 +186,9 @@ export function useTimelineSelection({
 	);
 
 	const handleSelectClip = useCallback(
-		(id: string | null) => {
+		(id: string | null, modifiers?: ClipSelectionModifiers) => {
 			setSelectAllBlocksActive(false);
-			onSelectClip?.(id);
+			onSelectClip?.(id, modifiers);
 		},
 		[onSelectClip],
 	);

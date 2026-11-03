@@ -27,6 +27,12 @@ interface TimelineWrapperProps {
 	allRegionSpans?: TimelineRegionSpan[];
 	onLiveSpanPreviewChange?: (id: string, span: Span | null) => void;
 	onDraggingChange?: (dragging: boolean) => void;
+	resolveClipGroupMove?: (
+		id: string,
+		span: Span,
+	) => { spans: Record<string, Span>; deltaMs: number } | null;
+	onClipGroupMove?: (deltaMs: number) => void;
+	onLiveSpanPreviewsChange?: (spans: Record<string, Span>) => void;
 }
 
 export default function TimelineWrapper({
@@ -43,6 +49,9 @@ export default function TimelineWrapper({
 	allRegionSpans = [],
 	onLiveSpanPreviewChange,
 	onDraggingChange,
+	resolveClipGroupMove,
+	onClipGroupMove,
+	onLiveSpanPreviewsChange,
 }: TimelineWrapperProps) {
 	const totalMs = Math.max(0, Math.round(videoDuration * 1000));
 
@@ -68,7 +77,13 @@ export default function TimelineWrapper({
 		(event: DragEndEvent) => {
 			const proposedRowId = event.over?.id as string;
 			const updatedSpan = event.active.data.current.getSpanFromDragEvent?.(event);
-			if (!updatedSpan || !proposedRowId) return;
+			if (!updatedSpan) return;
+			const group = resolveClipGroupMove?.(String(event.active.id), updatedSpan);
+			if (group) {
+				if (group.deltaMs) onClipGroupMove?.(group.deltaMs);
+				return;
+			}
+			if (!proposedRowId) return;
 
 			const activeItemId = event.active.id as string;
 			const resolved = resolveDragEnd(
@@ -93,6 +108,8 @@ export default function TimelineWrapper({
 			onItemSpanChange,
 			resolveTargetRowId,
 			totalMs,
+			resolveClipGroupMove,
+			onClipGroupMove,
 		],
 	);
 
@@ -164,6 +181,12 @@ export default function TimelineWrapper({
 	const onDragMove = useCallback(
 		(event: DragMoveEvent) => {
 			const span = event.active.data.current.getSpanFromDragEvent?.(event);
+			const group = span ? resolveClipGroupMove?.(String(event.active.id), span) : null;
+			if (group) {
+				onLiveSpanPreviewsChange?.(group.spans);
+				showTooltip(group.spans[String(event.active.id)]);
+				return;
+			}
 			const previewSpan = span ? resolveDragPreviewSpan(event, span) : null;
 			const screenX =
 				event.activatorEvent && "clientX" in event.activatorEvent
@@ -179,7 +202,13 @@ export default function TimelineWrapper({
 				onLiveSpanPreviewChange?.(event.active.id as string, previewSpan);
 			}
 		},
-		[onLiveSpanPreviewChange, resolveDragPreviewSpan, showTooltip],
+		[
+			onLiveSpanPreviewChange,
+			resolveDragPreviewSpan,
+			showTooltip,
+			resolveClipGroupMove,
+			onLiveSpanPreviewsChange,
+		],
 	);
 
 	const onResizeMove = useCallback(
@@ -213,10 +242,17 @@ export default function TimelineWrapper({
 		(event: DragEndEvent) => {
 			hideTooltip();
 			onDragEnd(event);
+			onLiveSpanPreviewsChange?.({});
 			onLiveSpanPreviewChange?.(event.active.id as string, null);
 			onDraggingChange?.(false);
 		},
-		[hideTooltip, onDraggingChange, onDragEnd, onLiveSpanPreviewChange],
+		[
+			hideTooltip,
+			onDraggingChange,
+			onDragEnd,
+			onLiveSpanPreviewChange,
+			onLiveSpanPreviewsChange,
+		],
 	);
 
 	// dnd-kit fires onDragCancel (not onDragEnd) when a drag is aborted, e.g. via
@@ -224,10 +260,11 @@ export default function TimelineWrapper({
 	const onDragCancel = useCallback(
 		(event: { active: { id: string | number } }) => {
 			hideTooltip();
+			onLiveSpanPreviewsChange?.({});
 			onLiveSpanPreviewChange?.(String(event.active.id), null);
 			onDraggingChange?.(false);
 		},
-		[hideTooltip, onDraggingChange, onLiveSpanPreviewChange],
+		[hideTooltip, onDraggingChange, onLiveSpanPreviewChange, onLiveSpanPreviewsChange],
 	);
 
 	const handleRangeChange = useCallback(

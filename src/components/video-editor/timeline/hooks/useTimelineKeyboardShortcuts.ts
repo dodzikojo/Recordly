@@ -20,6 +20,8 @@ interface UseTimelineKeyboardShortcutsParams {
 	selectedGap?: TimelineGap | null;
 	closeSelectedGap: () => void;
 	clearSelectedGap: () => void;
+	clearSelectedBlocks?: () => void;
+	activateSelectAllClips?: () => void;
 	selectedAnnotationId?: string | null;
 	selectedAudioId?: string | null;
 	selectedCaptionId?: string | null;
@@ -50,6 +52,8 @@ export function useTimelineKeyboardShortcuts({
 	selectedGap,
 	closeSelectedGap,
 	clearSelectedGap,
+	clearSelectedBlocks,
+	activateSelectAllClips,
 	selectedAnnotationId,
 	selectedAudioId,
 	selectedCaptionId,
@@ -82,6 +86,10 @@ export function useTimelineKeyboardShortcuts({
 				clearSelectedGap();
 				return;
 			}
+			if (e.key === "Escape") {
+				clearSelectedBlocks?.();
+				return;
+			}
 
 			const isDeleteShortcut =
 				e.key === "Delete" ||
@@ -94,6 +102,11 @@ export function useTimelineKeyboardShortcuts({
 			}
 
 			if (matchesShortcut(e, { key: "a", ctrl: true }, isMac)) {
+				if (selectedClipId && activateSelectAllClips) {
+					e.preventDefault();
+					activateSelectAllClips();
+					return;
+				}
 				if (!hasAnyZoomBlocks) {
 					return;
 				}
@@ -175,6 +188,8 @@ export function useTimelineKeyboardShortcuts({
 		selectedGap,
 		closeSelectedGap,
 		clearSelectedGap,
+		clearSelectedBlocks,
+		activateSelectAllClips,
 		selectedKeyframeId,
 		selectedZoomId,
 	]);

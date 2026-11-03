@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getClipSourceEndMs } from "./types";
 
 import {
 	type BlockedClipSpeedChange,
@@ -19,6 +20,19 @@ describe("formatClipSpeedLabel", () => {
 });
 
 describe("planClipSpeedChange", () => {
+	it("does not grow source duration when a rounded speed change is reversed", () => {
+		const first = planClipSpeedChange({
+			clipRegions: [{ id: "a", startMs: 0, endMs: 1001, speed: 1 }],
+			zoomRegions: [],
+			selectedClipId: "a",
+			speed: 2,
+		});
+		if (!first || "blockedReason" in first) throw new Error("Unexpected blocked edit");
+		expect(getClipSourceEndMs(first.clipRegions[0])).toBe(1001);
+		const restored = planClipSpeedChange({ ...first, selectedClipId: "a", speed: 1 });
+		if (!restored || "blockedReason" in restored) throw new Error("Unexpected blocked edit");
+		expect(restored.clipRegions[0].endMs).toBe(1001);
+	});
 	it("returns null for missing clips and invalid speeds", () => {
 		const clipRegions = [{ id: "clip-1", startMs: 0, endMs: 5_000, speed: 1 }];
 
@@ -52,7 +66,9 @@ describe("planClipSpeedChange", () => {
 		});
 
 		expect(result).toEqual({
-			clipRegions: [{ id: "clip-1", startMs: 0, endMs: 10_000, speed: 0.5 }],
+			clipRegions: [
+				{ id: "clip-1", startMs: 0, endMs: 10_000, speed: 0.5, sourceEndMs: 5000 },
+			],
 			zoomRegions: [],
 		});
 	});
@@ -66,7 +82,7 @@ describe("planClipSpeedChange", () => {
 		});
 
 		expect(result).toEqual({
-			clipRegions: [{ id: "clip-1", startMs: 0, endMs: 3_000, speed: 2 }],
+			clipRegions: [{ id: "clip-1", startMs: 0, endMs: 3_000, speed: 2, sourceEndMs: 6000 }],
 			zoomRegions: [],
 		});
 	});
@@ -80,7 +96,9 @@ describe("planClipSpeedChange", () => {
 		});
 
 		expect(result).toEqual({
-			clipRegions: [{ id: "clip-1", startMs: 0, endMs: 8_000, speed: 0.5 }],
+			clipRegions: [
+				{ id: "clip-1", startMs: 0, endMs: 8_000, speed: 0.5, sourceEndMs: 4000 },
+			],
 			zoomRegions: [],
 		});
 	});
@@ -103,16 +121,30 @@ describe("planClipSpeedChange", () => {
 		const result = planClipSpeedChange({
 			clipRegions: [{ id: "clip-1", startMs: 1_000, endMs: 5_000, speed: 1 }],
 			zoomRegions: [
-				{ id: "zoom-1", startMs: 2_000, endMs: 3_000, depth: 2, focus: { cx: 0.5, cy: 0.5 } },
+				{
+					id: "zoom-1",
+					startMs: 2_000,
+					endMs: 3_000,
+					depth: 2,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
 			],
 			selectedClipId: "clip-1",
 			speed: 0.5,
 		});
 
 		expect(result).toEqual({
-			clipRegions: [{ id: "clip-1", startMs: 1_000, endMs: 9_000, speed: 0.5 }],
+			clipRegions: [
+				{ id: "clip-1", startMs: 1_000, endMs: 9_000, speed: 0.5, sourceEndMs: 5000 },
+			],
 			zoomRegions: [
-				{ id: "zoom-1", startMs: 3_000, endMs: 5_000, depth: 2, focus: { cx: 0.5, cy: 0.5 } },
+				{
+					id: "zoom-1",
+					startMs: 3_000,
+					endMs: 5_000,
+					depth: 2,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
 			],
 		});
 	});
@@ -121,18 +153,44 @@ describe("planClipSpeedChange", () => {
 		const result = planClipSpeedChange({
 			clipRegions: [{ id: "clip-1", startMs: 2_000, endMs: 6_000, speed: 1 }],
 			zoomRegions: [
-				{ id: "zoom-before", startMs: 1_000, endMs: 1_500, depth: 2, focus: { cx: 0.5, cy: 0.5 } },
-				{ id: "zoom-after", startMs: 6_000, endMs: 6_500, depth: 2, focus: { cx: 0.5, cy: 0.5 } },
+				{
+					id: "zoom-before",
+					startMs: 1_000,
+					endMs: 1_500,
+					depth: 2,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
+				{
+					id: "zoom-after",
+					startMs: 6_000,
+					endMs: 6_500,
+					depth: 2,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
 			],
 			selectedClipId: "clip-1",
 			speed: 0.5,
 		});
 
 		expect(result).toEqual({
-			clipRegions: [{ id: "clip-1", startMs: 2_000, endMs: 10_000, speed: 0.5 }],
+			clipRegions: [
+				{ id: "clip-1", startMs: 2_000, endMs: 10_000, speed: 0.5, sourceEndMs: 6000 },
+			],
 			zoomRegions: [
-				{ id: "zoom-before", startMs: 1_000, endMs: 1_500, depth: 2, focus: { cx: 0.5, cy: 0.5 } },
-				{ id: "zoom-after", startMs: 6_000, endMs: 6_500, depth: 2, focus: { cx: 0.5, cy: 0.5 } },
+				{
+					id: "zoom-before",
+					startMs: 1_000,
+					endMs: 1_500,
+					depth: 2,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
+				{
+					id: "zoom-after",
+					startMs: 6_000,
+					endMs: 6_500,
+					depth: 2,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
 			],
 		});
 	});
@@ -141,8 +199,20 @@ describe("planClipSpeedChange", () => {
 		const result = planClipSpeedChange({
 			clipRegions: [{ id: "clip-1", startMs: 0, endMs: 5_000, speed: 1 }],
 			zoomRegions: [
-				{ id: "zoom-1", startMs: 2_000, endMs: 3_000, depth: 2, focus: { cx: 0.5, cy: 0.5 } },
-				{ id: "zoom-2", startMs: 5_500, endMs: 6_500, depth: 3, focus: { cx: 0.5, cy: 0.5 } },
+				{
+					id: "zoom-1",
+					startMs: 2_000,
+					endMs: 3_000,
+					depth: 2,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
+				{
+					id: "zoom-2",
+					startMs: 5_500,
+					endMs: 6_500,
+					depth: 3,
+					focus: { cx: 0.5, cy: 0.5 },
+				},
 			],
 			selectedClipId: "clip-1",
 			speed: 0.5,

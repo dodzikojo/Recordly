@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "Excluir {{count}} clipes",
+		"mixed": "Misto",
+		"selectedCount": "{{count}} clipes selecionados",
+		"emptyEdit": "Nenhum clipe de vídeo. Desfaça para restaurar a edição.",
+		"emptyExport": "Adicione um clipe de vídeo ou desfaça a exclusão antes de exportar."
+	},
 	"gap": {
 		"shortLabel": "Lacuna",
 		"label": "Lacuna {{start}}–{{end}} s",

@@ -2,6 +2,7 @@ import type { Span } from "dnd-timeline";
 import type { ForwardedRef, RefObject } from "react";
 import { useCallback, useImperativeHandle } from "react";
 import type { TimelineGap } from "../../closeGaps";
+import type { ClipSelectionModifiers } from "../../clipBatchEditing";
 import type {
 	AnnotationRegion,
 	AudioRegion,
@@ -50,7 +51,8 @@ interface UseTimelineEditorRuntimeParams {
 	onClipSpanChange?: (id: string, span: Span) => void;
 	onClipDelete?: (id: string) => void;
 	selectedClipId?: string | null;
-	onSelectClip?: (id: string | null) => void;
+	onSelectClip?: (id: string | null, modifiers?: ClipSelectionModifiers) => void;
+	onSelectAllClips?: () => void;
 	annotationRegions: AnnotationRegion[];
 	onAnnotationAdded?: (span: Span, trackIndex?: number) => void;
 	onAnnotationSpanChange?: (id: string, span: Span, trackIndex?: number) => void;
@@ -104,6 +106,7 @@ export function useTimelineEditorRuntime({
 	onClipDelete,
 	selectedClipId,
 	onSelectClip,
+	onSelectAllClips,
 	annotationRegions,
 	onAnnotationAdded,
 	onAnnotationSpanChange,
@@ -284,6 +287,8 @@ export function useTimelineEditorRuntime({
 			if (selectedGap) onCloseGap?.(selectedGap);
 		},
 		clearSelectedGap: () => onSelectGap?.(null),
+		clearSelectedBlocks,
+		activateSelectAllClips: onSelectAllClips,
 		selectedAnnotationId,
 		selectedAudioId,
 		selectedCaptionId,

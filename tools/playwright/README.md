@@ -23,6 +23,10 @@ The script generates a short synthetic recording and narration with FFmpeg, open
 project in an isolated Electron profile, and exercises gap controls, Undo/Redo and save/reopen.
 It prints the temporary artifact directory and leaves the current app and user projects untouched.
 
+Use `--phase selection` for modifier selection, group drag/cancel, bulk clip/audio settings,
+Undo/Redo and explicit-empty-project persistence. This phase uses actual pointer and keyboard
+actions; the renderer state is inspected only for assertions.
+
 ## Run the calibration take
 
 1. Start Recordly with the control server on: `RECORDLY_CONTROL=1` (or `--control`).

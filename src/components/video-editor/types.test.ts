@@ -13,6 +13,24 @@ import {
 } from "./types";
 
 describe("extendAutoFullTrackClip", () => {
+	it("extends an explicitly pinned source end with an eligible 1x auto clip", () => {
+		const next = extendAutoFullTrackClip(
+			[
+				{
+					id: "clip-1",
+					startMs: 0,
+					endMs: 1001,
+					speed: 1,
+					sourceStartMs: 0,
+					sourceEndMs: 1001,
+				},
+			],
+			"clip-1",
+			1001,
+			2001,
+		);
+		expect(next?.[0].sourceEndMs).toBe(2001);
+	});
 	it("extends the default full-track clip when metadata duration grows", () => {
 		expect(
 			extendAutoFullTrackClip(

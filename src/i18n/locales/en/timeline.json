@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "Delete {{count}} Clips",
+		"mixed": "Mixed",
+		"selectedCount": "{{count}} clips selected",
+		"emptyEdit": "No video clips. Undo to restore your edit.",
+		"emptyExport": "Add a video clip or undo deletion before exporting."
+	},
 	"gap": {
 		"shortLabel": "Gap",
 		"label": "Gap {{start}}–{{end}} s",

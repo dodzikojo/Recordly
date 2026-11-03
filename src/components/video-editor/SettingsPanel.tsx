@@ -710,6 +710,7 @@ interface SettingsPanelProps {
 	onZoomModeChange?: (mode: ZoomMode) => void;
 	onZoomDelete?: (id: string) => void;
 	selectedClipId?: string | null;
+	selectedClipCount?: number;
 	selectedClipSpeed?: number | null;
 	selectedClipMuted?: boolean | null;
 	selectedClipShowSourceAudio?: boolean | null;
@@ -719,6 +720,7 @@ interface SettingsPanelProps {
 	onClipShowSourceAudioChange?: (show: boolean) => void;
 	sourceAudioTrackMeta?: Array<{ id: string; label: string }>;
 	sourceAudioTrackSettings?: Record<string, { volume: number; normalize: boolean }>;
+	sourceAudioMixed?: Record<string, { volume: boolean; normalize: boolean }>;
 	onSourceAudioTrackVolumeChange?: (id: string, volume: number) => void;
 	onSourceAudioTrackNormalizeChange?: (id: string, normalize: boolean) => void;
 	onClipDelete?: (id: string) => void;
@@ -1173,6 +1175,7 @@ export function SettingsPanel({
 	onZoomModeChange,
 	onZoomDelete,
 	selectedClipId,
+	selectedClipCount = 0,
 	selectedClipSpeed,
 	selectedClipMuted,
 	selectedClipShowSourceAudio = false,
@@ -1182,6 +1185,7 @@ export function SettingsPanel({
 	onClipShowSourceAudioChange,
 	sourceAudioTrackMeta = [],
 	sourceAudioTrackSettings = {},
+	sourceAudioMixed = {},
 	onSourceAudioTrackVolumeChange,
 	onSourceAudioTrackNormalizeChange,
 	onClipDelete,
@@ -3468,6 +3472,16 @@ export function SettingsPanel({
 			<section className="flex flex-col gap-2">
 				<div className="flex items-center justify-between gap-3">
 					<SectionLabel>{tSettings("clip.title", "Clip")}</SectionLabel>
+					{selectedClipCount > 1 && (
+						<span
+							data-clip-selection-count={selectedClipCount}
+							className="text-[10px] text-muted-foreground"
+						>
+							{t("timeline.batch.selectedCount", "{{count}} clips selected", {
+								count: selectedClipCount,
+							})}
+						</span>
+					)}
 					{selectedClipSpeed != null && selectedClipSpeed !== 1 && (
 						<span className="rounded-full bg-[#06b6d4]/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[#06b6d4]">
 							{selectedClipSpeed}×
@@ -3477,6 +3491,11 @@ export function SettingsPanel({
 
 				<div className="flex items-center gap-3">
 					<SectionLabel>{tSettings("speed.label", "Speed")}</SectionLabel>
+					{selectedClipCount > 1 && selectedClipSpeed == null && (
+						<span className="text-[10px] text-muted-foreground">
+							{t("timeline.batch.mixed", "Mixed")}
+						</span>
+					)}
 				</div>
 				<div className="grid grid-cols-4 gap-1.5">
 					{[
@@ -3525,12 +3544,20 @@ export function SettingsPanel({
 								{tSettings("clip.mute", "Mute")}
 							</span>
 							<p className="text-[9px] text-muted-foreground/50 mt-0.5">
-								{selectedClipMuted
-									? tSettings("clip.mutedState", "Audio is muted")
-									: tSettings("clip.unmutedState", "Audio is playing")}
+								{selectedClipMuted == null && selectedClipCount > 1
+									? t("timeline.batch.mixed", "Mixed")
+									: selectedClipMuted
+										? tSettings("clip.mutedState", "Audio is muted")
+										: tSettings("clip.unmutedState", "Audio is playing")}
 							</p>
 						</div>
 						<Switch
+							aria-label={tSettings("clip.mute", "Mute")}
+							aria-checked={
+								selectedClipMuted == null && selectedClipCount > 1
+									? "mixed"
+									: (selectedClipMuted ?? false)
+							}
 							checked={selectedClipMuted ?? false}
 							onCheckedChange={(v) => onClipMutedChange?.(v)}
 							className="data-[state=checked]:bg-[#06b6d4] scale-75"
@@ -3543,8 +3570,22 @@ export function SettingsPanel({
 									"clip.separateClipFromAudio",
 									"Separate clip from audio",
 								)}
+								{selectedClipShowSourceAudio == null && selectedClipCount > 1 && (
+									<span className="ml-2">
+										{t("timeline.batch.mixed", "Mixed")}
+									</span>
+								)}
 							</span>
 							<Switch
+								aria-label={tSettings(
+									"clip.separateClipFromAudio",
+									"Separate clip from audio",
+								)}
+								aria-checked={
+									selectedClipShowSourceAudio == null && selectedClipCount > 1
+										? "mixed"
+										: (selectedClipShowSourceAudio ?? false)
+								}
 								checked={selectedClipShowSourceAudio ?? false}
 								onCheckedChange={(v) => onClipShowSourceAudioChange?.(v)}
 								className="data-[state=checked]:bg-[#06b6d4] scale-75"
@@ -3586,8 +3627,19 @@ export function SettingsPanel({
 									<div className="mb-2 flex items-center justify-between rounded-lg bg-foreground/[0.03] px-2.5 py-1.5">
 										<span className="text-[10px] text-muted-foreground">
 											{tSettings("audio.normalize", "Normalize")}
+											{sourceAudioMixed[track.id]?.normalize && (
+												<span className="ml-2">
+													{t("timeline.batch.mixed", "Mixed")}
+												</span>
+											)}
 										</span>
 										<Switch
+											aria-label={tSettings("audio.normalize", "Normalize")}
+											aria-checked={
+												sourceAudioMixed[track.id]?.normalize
+													? "mixed"
+													: settings.normalize
+											}
 											checked={settings.normalize}
 											onCheckedChange={(v) =>
 												onSourceAudioTrackNormalizeChange?.(track.id, v)
@@ -3605,7 +3657,11 @@ export function SettingsPanel({
 										onChange={(v) =>
 											onSourceAudioTrackVolumeChange?.(track.id, v)
 										}
-										formatValue={(v) => `${Math.round(v * 100)}%`}
+										formatValue={(v) =>
+											sourceAudioMixed[track.id]?.volume
+												? t("timeline.batch.mixed", "Mixed")
+												: `${Math.round(v * 100)}%`
+										}
 										parseInput={(text) =>
 											parseFloat(text.replace(/%$/, "")) / 100
 										}
@@ -4332,7 +4388,11 @@ export function SettingsPanel({
 						className="h-8 w-full gap-2 border border-red-500/20 bg-red-500/10 text-xs text-red-400 transition-all hover:border-red-500/30 hover:bg-red-500/20"
 					>
 						<Trash2 className="h-3 w-3" />
-						{tSettings("clip.delete", "Delete Clip")}
+						{selectedClipCount > 1
+							? t("timeline.batch.deleteCount", "Delete {{count}} Clips", {
+									count: selectedClipCount,
+								})
+							: tSettings("clip.delete", "Delete Clip")}
 					</Button>
 				)}
 				{activeEffectSection === "zoom" && selectedZoomId && (
