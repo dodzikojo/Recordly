@@ -4,7 +4,9 @@
         "pause": "Pause",
         "skipBack": "Zurück springen",
         "skipForward": "Vorwärts springen",
-        "muteUnmute": "Stummschalten/Stummschaltung aufheben"
+        "muteUnmute": "Stummschalten/Stummschaltung aufheben",
+        "editedPosition": "Position im geschnittenen Video (Zeitleiste {{time}})",
+        "editedLength": "Länge nach Schnitten und Tempoänderungen (die Zeitleiste endet bei {{time}})"
     },
 	"annotations": {
         "settings": "Einstellungen für Anmerkungen",

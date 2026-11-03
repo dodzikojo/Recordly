@@ -249,6 +249,41 @@ export function getTimelineDurationMs(clips: ClipRegion[], sourceDurationMs: num
 	);
 }
 
+/**
+ * Length of the edited video: the kept clips at their played length. Gaps on the
+ * timeline are cut from playback and export, so they do not count.
+ */
+export function getEditedDurationMs(clips: ClipRegion[], sourceDurationMs: number): number {
+	if (clips.length === 0) {
+		return Math.max(0, Math.round(sourceDurationMs));
+	}
+
+	return clips.reduce(
+		(durationMs, clip) => durationMs + Math.max(0, Math.round(clip.endMs - clip.startMs)),
+		0,
+	);
+}
+
+/** Where a timeline time falls in the edited video. A time in a gap holds at the clips before it. */
+export function mapTimelineTimeToEditedTime(timeMs: number, clips: ClipRegion[]): number {
+	const roundedTimeMs = Math.round(timeMs);
+	if (clips.length === 0) {
+		return roundedTimeMs;
+	}
+
+	let editedMs = 0;
+	for (const clip of sortClipRegions(clips)) {
+		if (roundedTimeMs <= clip.startMs) {
+			break;
+		}
+
+		const clipDurationMs = Math.max(0, Math.round(clip.endMs - clip.startMs));
+		editedMs += Math.min(clipDurationMs, roundedTimeMs - clip.startMs);
+	}
+
+	return editedMs;
+}
+
 export function sortClipRegions(clips: ClipRegion[]): ClipRegion[] {
 	return [...clips].sort((left, right) => left.startMs - right.startMs);
 }
