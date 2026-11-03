@@ -91,6 +91,7 @@ import {
 	getAspectRatioValue,
 } from "@/utils/aspectRatioUtils";
 import { planClipSpeedChange } from "./clipSpeedChange";
+import { mapTimelineRegionsToSource, planRippleClipDelete } from "./rippleDelete";
 import { ExtensionIcon } from "./ExtensionIcon";
 import {
 	calculateMp4ExportDimensions,
@@ -1200,7 +1201,7 @@ export default function VideoEditor() {
 						(webcam.sourcePath ? toFileUrl(webcam.sourcePath) : null),
 					videoWidth: previewVideo.videoWidth,
 					videoHeight: previewVideo.videoHeight,
-					annotationRegions,
+					annotationRegions: mapTimelineRegionsToSource(annotationRegions, clipRegions),
 					autoCaptions,
 					autoCaptionSettings,
 					speedRegions: (() => {
@@ -3705,6 +3706,10 @@ export default function VideoEditor() {
 			})),
 		[zoomRegions, mapTimelineTimeToSourceTime],
 	);
+	const effectiveAnnotationRegions = useMemo(
+		() => mapTimelineRegionsToSource(annotationRegions, clipRegions),
+		[annotationRegions, clipRegions],
+	);
 
 	const effectiveCaptionRegions = useMemo<CaptionCue[]>(
 		() =>
@@ -4353,27 +4358,48 @@ export default function VideoEditor() {
 	const handleClipDelete = useCallback(
 		(id: string) => {
 			const deletedClip = clipRegions.find((clip) => clip.id === id);
-			setClipRegions((prev) => prev.filter((clip) => clip.id !== id));
-			if (deletedClip) {
-				const { startMs, endMs } = deletedClip;
-				setZoomRegions((prev) =>
-					prev.filter((region) => region.endMs <= startMs || region.startMs >= endMs),
-				);
-				setAnnotationRegions((prev) =>
-					prev.filter((region) => region.endMs <= startMs || region.startMs >= endMs),
-				);
-				setSpeedRegions((prev) =>
-					prev.filter((region) => region.endMs <= startMs || region.startMs >= endMs),
-				);
-				setAudioRegions((prev) =>
-					prev.filter((region) => region.endMs <= startMs || region.startMs >= endMs),
-				);
+			const plan = planRippleClipDelete(buildHistorySnapshot(), id);
+			if (!deletedClip || !plan) return;
+			const playback = videoPlaybackRef.current;
+			playback?.pause();
+			playback?.cancelCaptionEdit();
+			// React batches this edit into one history entry, including moved overlays.
+			setClipRegions(plan.clipRegions);
+			setZoomRegions(plan.zoomRegions);
+			setAnnotationRegions(plan.annotationRegions);
+			setAudioRegions(plan.audioRegions);
+			setSpeedRegions(plan.speedRegions);
+			setAutoCaptions(plan.autoCaptions);
+			setSelectedClipId(plan.selectedClipId);
+			setSelectedZoomId(plan.selectedZoomId);
+			setSelectedAnnotationId(plan.selectedAnnotationId);
+			setSelectedAudioId(plan.selectedAudioId);
+			if (
+				selectedCaptionId &&
+				!plan.autoCaptions.some((cue) => cue.id === selectedCaptionId)
+			) {
+				setSelectedCaptionId(null);
 			}
-			if (selectedClipId === id) {
-				setSelectedClipId(null);
+			const sourceTime = (playback?.video?.currentTime ?? currentTime) * 1000;
+			if (
+				sourceTime >= getClipSourceStartMs(deletedClip) &&
+				sourceTime < getClipSourceEndMs(deletedClip)
+			) {
+				const following = [...plan.clipRegions]
+					.sort((a, b) => a.startMs - b.startMs)
+					.find((clip) => clip.startMs >= deletedClip.startMs);
+				const previous = [...plan.clipRegions].sort((a, b) => b.endMs - a.endMs)[0];
+				const target = following
+					? getClipSourceStartMs(following)
+					: previous
+						? Math.max(getClipSourceStartMs(previous), getClipSourceEndMs(previous) - 1)
+						: 0;
+				if (playback?.video) playback.video.currentTime = target / 1000;
+				setCurrentTime(target / 1000);
 			}
+			setPreviewSeekVersion((version) => version + 1);
 		},
-		[clipRegions, selectedClipId],
+		[buildHistorySnapshot, clipRegions, currentTime, selectedCaptionId],
 	);
 
 	const handleSelectAudio = useCallback((id: string | null) => {
@@ -4814,7 +4840,7 @@ export default function VideoEditor() {
 						webcamUrl:
 							resolvedWebcamVideoUrl ??
 							(webcam.sourcePath ? toFileUrl(webcam.sourcePath) : null),
-						annotationRegions,
+						annotationRegions: effectiveAnnotationRegions,
 						autoCaptions,
 						autoCaptionSettings,
 						zoomRegions: effectiveZoomRegions,
@@ -5000,7 +5026,7 @@ export default function VideoEditor() {
 						webcamUrl:
 							resolvedWebcamVideoUrl ??
 							(webcam.sourcePath ? toFileUrl(webcam.sourcePath) : null),
-						annotationRegions,
+						annotationRegions: effectiveAnnotationRegions,
 						autoCaptions,
 						autoCaptionSettings,
 						zoomRegions: effectiveZoomRegions,
@@ -5312,7 +5338,7 @@ export default function VideoEditor() {
 			cropRegion,
 			webcam,
 			resolvedWebcamVideoUrl,
-			annotationRegions,
+			effectiveAnnotationRegions,
 			autoCaptions,
 			autoCaptionSettings,
 			captionSidecarPayload,
@@ -5737,7 +5763,7 @@ export default function VideoEditor() {
 			webcamVideoPath={webcam.sourcePath ? resolvedWebcamVideoUrl : null}
 			trimRegions={trimRegions}
 			speedRegions={effectiveSpeedRegions}
-			annotationRegions={annotationRegions}
+			annotationRegions={effectiveAnnotationRegions}
 			autoCaptions={autoCaptions}
 			autoCaptionSettings={autoCaptionSettings}
 			onEditAutoCaption={handleSaveAutoCaptionEdit}
