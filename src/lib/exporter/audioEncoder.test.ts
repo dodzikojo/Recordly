@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AudioProcessor, softLimitOfflineMixPeaksInPlace } from "./audioEncoder";
+import type {
+	AudioRegion,
+	ClipRegion,
+	SpeedRegion,
+	TrimRegion,
+} from "@/components/video-editor/types";
 
 type OfflineRenderTestHarness = AudioProcessor & {
 	decodeAudioFromUrl(url: string): Promise<AudioBuffer | null>;
@@ -53,6 +59,44 @@ function fakeAudioBuffer(channels: Float32Array[]): AudioBuffer {
 }
 
 describe("AudioProcessor offline render preparation", () => {
+	it("keeps imported narration whole and at its edited start across sped-up clips and cuts", async () => {
+		const processor = new AudioProcessor() as unknown as OfflineRenderTestHarness;
+		vi.spyOn(processor, "decodeAudioFromUrl").mockResolvedValue({
+			duration: 28,
+			numberOfChannels: 1,
+		} as AudioBuffer);
+		vi.spyOn(processor, "getMediaDurationSec").mockResolvedValue(60);
+		const prepared = await (
+			processor as unknown as {
+				prepareOfflineRender(
+					video: string,
+					trims: TrimRegion[],
+					speeds: SpeedRegion[],
+					audio: AudioRegion[],
+					paths: string[],
+					delays: undefined,
+					gains: undefined,
+					clips: ClipRegion[],
+				): Promise<{
+					regionEntries: Array<{ region: AudioRegion }>;
+					outputDurationMs: number;
+				}>;
+			}
+		).prepareOfflineRender(
+			"video.mp4",
+			[{ id: "cut", startMs: 11000, endMs: 30000 }],
+			[{ id: "speed", startMs: 1000, endMs: 11000, speed: 5 }],
+			[{ id: "voice", startMs: 1000, endMs: 29000, audioPath: "voice.wav", volume: 1 }],
+			[],
+			undefined,
+			undefined,
+			[
+				{ id: "a", startMs: 1000, endMs: 3000, speed: 5 },
+				{ id: "b", startMs: 30000, endMs: 60000, speed: 1 },
+			],
+		);
+		expect(prepared.regionEntries[0].region).toMatchObject({ startMs: 0, endMs: 28000 });
+	});
 	it("keeps embedded source audio separate from external companion sidecars", async () => {
 		const processor = new AudioProcessor() as unknown as OfflineRenderTestHarness;
 		const mainBuffer = { duration: 10, numberOfChannels: 2 } as AudioBuffer;

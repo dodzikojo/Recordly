@@ -875,6 +875,12 @@ interface Window {
 			canceled?: boolean;
 			error?: string;
 		}>;
+		prepareVideoPreview: (filePath: string) => Promise<{
+			success: boolean;
+			path?: string;
+			width?: number;
+			height?: number;
+		}>;
 		loadProjectFile: () => Promise<{
 			success: boolean;
 			path?: string;

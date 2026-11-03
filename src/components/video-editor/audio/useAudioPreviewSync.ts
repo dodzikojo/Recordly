@@ -1,15 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildResolvedAudioPlan } from "@/lib/exporter/audioRoutingEngine";
 import { resolveMediaElementSource } from "@/lib/exporter/localMediaSource";
 import {
   clampMediaTimeToDuration,
   enablePitchPreservingPlayback,
   estimateCompanionAudioStartDelaySeconds,
-  getMediaSyncPlaybackRate,
   resolvePreviewMediaDuration,
   setMediaPlaybackRate,
+  MAX_MEDIA_PLAYBACK_RATE,
+  MIN_MEDIA_PLAYBACK_RATE,
 } from "@/lib/mediaTiming";
-import type { AudioRegion, SpeedRegion } from "../types";
+import {
+  mapTimelineTimeToEditedTime,
+  type AudioRegion,
+  type ClipRegion,
+  type SpeedRegion,
+} from "../types";
+import { hasAudioPreviewTimeJumped, type AudioPreviewClockSample } from "./previewAudioTiming";
+import { watchPreviewPlaybackReadiness } from "./previewPlaybackReadiness";
 import {
   getAudioResourceVersionKey,
   getVersionedAudioResourceUrl,
@@ -25,6 +33,9 @@ interface UseAudioPreviewSyncParams {
   isPlaying: boolean;
   currentTime: number;
   timelineTime: number;
+  clipRegions: ClipRegion[];
+  previewSeekVersion: number;
+  playbackVideo?: HTMLVideoElement | null;
   duration: number;
   effectiveSpeedRegions: SpeedRegion[];
   previewSourceAudioFallbackPaths: string[];
@@ -41,6 +52,9 @@ export function useAudioPreviewSync({
   isPlaying,
   currentTime,
   timelineTime,
+  clipRegions,
+  previewSeekVersion,
+  playbackVideo,
   duration,
   effectiveSpeedRegions,
   previewSourceAudioFallbackPaths,
@@ -79,7 +93,25 @@ export function useAudioPreviewSync({
   const sourceAudioContextRef = useRef<AudioContext | null>(null);
   const sourceAudioMasterGainRef = useRef<GainNode | null>(null);
   const sourceAudioResumePromiseRef = useRef<Promise<void> | null>(null);
-  const lastSourceAudioSyncTimeRef = useRef<number | null>(null);
+  const lastSourceAudioSyncTimeRef = useRef<AudioPreviewClockSample | null>(null);
+  const lastSourceSeekVersionRef = useRef(previewSeekVersion);
+  const userAudioSyncRef = useRef(
+    new Map<string, { startMs: number; seekVersion: number; playing: boolean }>(),
+  );
+  const [playbackReady, setPlaybackReady] = useState(true);
+  const audioPlaybackAllowedRef = useRef(false);
+  audioPlaybackAllowedRef.current = isPlaying && playbackReady;
+
+  useEffect(() => {
+    if (!playbackVideo) {
+      setPlaybackReady(true);
+      return;
+    }
+    return watchPreviewPlaybackReadiness(playbackVideo, setPlaybackReady, () => {
+      for (const audio of audioElementsRef.current.values()) audio.pause();
+      for (const audio of sourceAudioElementsRef.current.values()) audio.pause();
+    });
+  }, [playbackVideo]);
 
   const ensureSourceAudioContext = useCallback(() => {
     if (!sourceAudioContextRef.current) {
@@ -110,15 +142,17 @@ export function useAudioPreviewSync({
   }, [ensureSourceAudioContext]);
 
   const playSourceAudioPreview = useCallback(() => {
-    void ensureSourceAudioRunning();
-    for (const audio of sourceAudioElementsRef.current.values()) {
-      if (!audio.src) continue;
-      audio.play().catch(() => undefined);
-    }
-  }, [ensureSourceAudioRunning]);
+    if (playbackVideo && (playbackVideo.seeking || playbackVideo.readyState < 2)) return;
+    void ensureSourceAudioRunning().then(() => {
+      if (!audioPlaybackAllowedRef.current) return;
+      for (const audio of sourceAudioElementsRef.current.values()) {
+        if (!audio.src) continue;
+        audio.play().catch(() => undefined);
+      }
+    });
+  }, [ensureSourceAudioRunning, playbackVideo]);
 
   useEffect(() => {
-    let cancelled = false;
     const existing = audioElementsRef.current;
     const currentIds = new Set(resolvedUserTracks.map((track) => track.id));
 
@@ -129,6 +163,7 @@ export function useAudioPreviewSync({
         audioElementRevokersRef.current.get(id)?.();
         audioElementRevokersRef.current.delete(id);
         audioElementResourcesRef.current.delete(id);
+        userAudioSyncRef.current.delete(id);
         existing.delete(id);
       }
     }
@@ -153,7 +188,6 @@ export function useAudioPreviewSync({
           const latestAudio = existing.get(track.id);
 
           if (
-            cancelled ||
             latestAudio !== audio ||
             audioElementResourcesRef.current.get(track.id) !== track.sourceRef.path
           ) {
@@ -168,10 +202,6 @@ export function useAudioPreviewSync({
 
       audio.volume = Math.max(0, Math.min(1, track.gain * previewVolume));
     }
-
-    return () => {
-      cancelled = true;
-    };
   }, [previewVolume, resolvedUserTracks]);
 
   useEffect(() => {
@@ -270,7 +300,13 @@ export function useAudioPreviewSync({
         })();
       }
 
-      audio.volume = Math.max(0, Math.min(1, getSourceTrackPreviewGain(audioPath) * (isCurrentClipMuted ? 0 : previewVolume)));
+      audio.volume = Math.max(
+        0,
+        Math.min(
+          1,
+          getSourceTrackPreviewGain(audioPath) * (isCurrentClipMuted ? 0 : previewVolume),
+        ),
+      );
     }
 
     if (sourceAudioMasterGainRef.current) {
@@ -338,33 +374,46 @@ export function useAudioPreviewSync({
   }, []);
 
   useEffect(() => {
-    const currentTimeMs = timelineTime * 1000;
-    const activeSpeedRegion = effectiveSpeedRegions.find(
-      (region) => currentTimeMs >= region.startMs && currentTimeMs < region.endMs,
-    );
-    const targetPlaybackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
+    const currentTimeMs = mapTimelineTimeToEditedTime(timelineTime * 1000, clipRegions);
 
     for (const track of resolvedUserTracks) {
       const audio = audioElementsRef.current.get(track.id);
       if (!audio) continue;
 
-      const startMs = track.timelineBinding.startMs;
-      const endMs = track.timelineBinding.endMs;
+      const startMs = mapTimelineTimeToEditedTime(track.timelineBinding.startMs, clipRegions);
+      const endMs = startMs + track.timelineBinding.endMs - track.timelineBinding.startMs;
       const isInRegion = currentTimeMs >= startMs && currentTimeMs < endMs;
+      const previous = userAudioSyncRef.current.get(track.id);
+      const shouldAlign =
+        !previous ||
+        !previous.playing ||
+        !isPlaying ||
+        previous.startMs !== startMs ||
+        previous.seekVersion !== previewSeekVersion;
+      userAudioSyncRef.current.set(track.id, {
+        startMs,
+        seekVersion: previewSeekVersion,
+        playing: isPlaying && playbackReady && isInRegion,
+      });
 
-      if (isPlaying && isInRegion) {
+      const audioOffset = Math.max(0, (currentTimeMs - startMs) / 1000);
+      // Align on explicit seeks, edits and playback starts. Chasing each video frame
+      // repeatedly flushes the audio decoder, especially at high preview speeds.
+      if (
+        isInRegion &&
+        shouldAlign &&
+        (!isPlaying || playbackReady) &&
+        !audio.seeking &&
+        Math.abs(audio.currentTime - audioOffset) > 0.01
+      ) {
+        audio.currentTime = audioOffset;
+      }
+      if (isPlaying && playbackReady && isInRegion && !audio.ended) {
         enablePitchPreservingPlayback(audio);
-        const audioOffset = (currentTimeMs - startMs) / 1000;
-        if (Math.abs(audio.currentTime - audioOffset) > 0.2) {
-          audio.currentTime = audioOffset;
-        }
-        const syncedPlaybackRate = getMediaSyncPlaybackRate({
-          basePlaybackRate: targetPlaybackRate,
-          currentTime: audio.currentTime,
-          targetTime: audioOffset,
-        });
-        if (Math.abs(audio.playbackRate - syncedPlaybackRate) > 0.001) {
-          setMediaPlaybackRate(audio, syncedPlaybackRate);
+        // Imported music/voiceover owns its timeline; only recorded source audio
+        // follows video speed.
+        if (audio.playbackRate !== 1) {
+          setMediaPlaybackRate(audio, 1);
         }
         if (audio.paused) {
           audio.play().catch(() => undefined);
@@ -373,7 +422,7 @@ export function useAudioPreviewSync({
         audio.pause();
       }
     }
-  }, [effectiveSpeedRegions, isPlaying, resolvedUserTracks, timelineTime]);
+  }, [clipRegions, previewSeekVersion, playbackReady, isPlaying, resolvedUserTracks, timelineTime]);
 
   useEffect(() => {
     if (resolvedSourceTracks.length === 0) {
@@ -381,13 +430,16 @@ export function useAudioPreviewSync({
       return;
     }
 
+    const sourcePlaybackTime = playbackVideo?.currentTime ?? currentTime;
     const activeSpeedRegion = effectiveSpeedRegions.find(
-      (region) => currentTime * 1000 >= region.startMs && currentTime * 1000 < region.endMs,
+      (region) =>
+        sourcePlaybackTime * 1000 >= region.startMs && sourcePlaybackTime * 1000 < region.endMs,
     );
     const targetPlaybackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
-    const previousTimelineTime = lastSourceAudioSyncTimeRef.current;
+    const now = performance.now();
     const timelineJumped =
-      previousTimelineTime === null || Math.abs(currentTime - previousTimelineTime) > 0.25;
+      hasAudioPreviewTimeJumped(lastSourceAudioSyncTimeRef.current, sourcePlaybackTime, now) ||
+      lastSourceSeekVersionRef.current !== previewSeekVersion;
     const driftThreshold = isPlaying
       ? SOURCE_AUDIO_PREVIEW_PLAYING_SEEK_DRIFT_SECONDS
       : SOURCE_AUDIO_PREVIEW_PAUSED_SEEK_DRIFT_SECONDS;
@@ -399,7 +451,13 @@ export function useAudioPreviewSync({
 
     for (const audio of sourceAudioElementsRef.current.values()) {
       const sourceAudioPath = audio.dataset.sourceAudioPath ?? "";
-      audio.volume = Math.max(0, Math.min(1, getSourceTrackPreviewGain(sourceAudioPath) * (isCurrentClipMuted ? 0 : previewVolume)));
+      audio.volume = Math.max(
+        0,
+        Math.min(
+          1,
+          getSourceTrackPreviewGain(sourceAudioPath) * (isCurrentClipMuted ? 0 : previewVolume),
+        ),
+      );
 
       enablePitchPreservingPlayback(audio);
       const audioDuration = resolvePreviewMediaDuration(audio.duration, duration);
@@ -413,17 +471,20 @@ export function useAudioPreviewSync({
       const startDelaySeconds = isMicCompanionTrack
         ? 0
         : Number.isFinite(duration) &&
-              (rawStartDelaySeconds >= Math.max(0, duration - 0.01) ||
-                rawStartDelaySeconds > Math.max(maxPreviewStartDelaySeconds, duration * 0.9))
-            ? 0
-            : rawStartDelaySeconds;
-      const beforeAudioStart = currentTime + 0.001 < startDelaySeconds;
-      const targetTime = clampMediaTimeToDuration(currentTime - startDelaySeconds, audioDuration);
+            (rawStartDelaySeconds >= Math.max(0, duration - 0.01) ||
+              rawStartDelaySeconds > Math.max(maxPreviewStartDelaySeconds, duration * 0.9))
+          ? 0
+          : rawStartDelaySeconds;
+      const beforeAudioStart = sourcePlaybackTime + 0.001 < startDelaySeconds;
+      const targetTime = clampMediaTimeToDuration(
+        sourcePlaybackTime - startDelaySeconds,
+        audioDuration,
+      );
 
       const shouldSeek =
-        timelineJumped ||
-        (!isPlaying && Math.abs(audio.currentTime - targetTime) > driftThreshold) ||
-        (isPlaying && Math.abs(audio.currentTime - targetTime) > 0.9);
+        !audio.seeking &&
+        (timelineJumped ||
+          (!isPlaying && Math.abs(audio.currentTime - targetTime) > driftThreshold));
       if (shouldSeek) {
         try {
           audio.currentTime = targetTime;
@@ -432,16 +493,18 @@ export function useAudioPreviewSync({
         }
       }
 
-      // KISS for companion source tracks: fixed playback rate avoids audible flutter/stutter
-      // from continuous micro-corrections on system audio.
+      // Use a steady rate for recorded audio; per-frame tempo correction is audible.
       const syncedPlaybackRate = targetPlaybackRate;
-      if (Math.abs(audio.playbackRate - syncedPlaybackRate) > 0.001) {
+      if (
+        Math.abs(audio.playbackRate - Math.min(MAX_MEDIA_PLAYBACK_RATE, syncedPlaybackRate)) > 0.001
+      ) {
         setMediaPlaybackRate(audio, syncedPlaybackRate);
       }
 
       const atEnd = audioDuration !== null && targetTime >= audioDuration;
-      if (isPlaying && !beforeAudioStart && !atEnd) {
+      if (isPlaying && playbackReady && !beforeAudioStart && !atEnd) {
         void ensureSourceAudioRunning().then(() => {
+          if (!audioPlaybackAllowedRef.current) return;
           audio.play().catch(() => undefined);
         });
       } else if (!audio.paused) {
@@ -449,9 +512,20 @@ export function useAudioPreviewSync({
       }
     }
 
-    lastSourceAudioSyncTimeRef.current = currentTime;
+    lastSourceAudioSyncTimeRef.current = {
+      time: sourcePlaybackTime,
+      now,
+      rate:
+        isPlaying && playbackReady
+          ? Math.max(MIN_MEDIA_PLAYBACK_RATE, Math.min(MAX_MEDIA_PLAYBACK_RATE, targetPlaybackRate))
+          : 0,
+    };
+    lastSourceSeekVersionRef.current = previewSeekVersion;
   }, [
     currentTime,
+    previewSeekVersion,
+    playbackVideo,
+    playbackReady,
     duration,
     effectiveSpeedRegions,
     getSourceTrackPreviewGain,
@@ -462,19 +536,6 @@ export function useAudioPreviewSync({
     sourceAudioFallbackStartDelayMsByPath,
     ensureSourceAudioRunning,
   ]);
-
-  useEffect(() => {
-    if (!isPlaying || resolvedSourceTracks.length === 0) {
-      return;
-    }
-    void ensureSourceAudioRunning().then(() => {
-      for (const audio of sourceAudioElementsRef.current.values()) {
-        if (audio.paused) {
-          audio.play().catch(() => undefined);
-        }
-      }
-    });
-  }, [isPlaying, resolvedSourceTracks.length, ensureSourceAudioRunning]);
 
   return { playSourceAudioPreview };
 }

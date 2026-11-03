@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeWebcamBackgroundBlurSettings } from "../../../src/lib/webcamBackgroundBlur";
 import { normalizeScreenCropRegion } from "../../../src/lib/screenCrop";
+import { registerPreviewProxyHandler } from "../previewProxy";
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { RECORDINGS_DIR } from "../../appPaths";
 import { buildMediaUrl, getMediaServerBaseUrl } from "../../mediaServer";
@@ -216,6 +217,7 @@ async function ensureNamedProjectSaveDoesNotOverwriteDifferentProject(
 }
 
 export function registerProjectHandlers() {
+  registerPreviewProxyHandler();
   ipcMain.handle('reveal-in-folder', async (_, filePath: string) => {
     try {
       // shell.showItemInFolder doesn't return a value, it throws on error

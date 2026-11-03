@@ -128,6 +128,7 @@ const PhSettings = (props: { className?: string; weight?: "fill" | "regular" }) 
 import type { SourceAudioTrackSettings } from "@/components/video-editor/audio/audioTypes";
 import { extensionHost } from "@/lib/extensions";
 import { useVideoEditorAudio } from "./audio/useVideoEditorAudio";
+import { useOptimizedVideoPreview } from "./hooks/useOptimizedVideoPreview";
 import { resolveAutoCaptionSourcePath } from "./autoCaptionSource";
 import { CropControl } from "./CropControl";
 import {
@@ -440,7 +441,10 @@ export default function VideoEditor() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [isPlaying, setIsPlaying] = useState(false);
+	// Audio must rebind when preview replacement mounts a new video element.
+	const [playbackVideo, setPlaybackVideo] = useState<HTMLVideoElement | null>(null);
 	const [currentTime, setCurrentTime] = useState(0);
+	const [previewSeekVersion, setPreviewSeekVersion] = useState(0);
 	const [duration, setDuration] = useState(0);
 	const [wallpaper, setWallpaper] = useState<string>(initialEditorPreferences.wallpaper);
 	const [shadowIntensity, setShadowIntensity] = useState(
@@ -1497,24 +1501,38 @@ export default function VideoEditor() {
 
 	void historyVersion;
 
+	const optimizedPreview = useOptimizedVideoPreview(
+		videoSourcePath,
+		Math.max(
+			1,
+			...clipRegions.map((clip) => clip.speed),
+			...speedRegions.map((region) => region.speed),
+		),
+		isPlaying || isExporting,
+	);
+
 	const gifOutputDimensions = useMemo(
 		() =>
 			calculateOutputDimensions(
-				videoPlaybackRef.current?.video?.videoWidth || 1920,
-				videoPlaybackRef.current?.video?.videoHeight || 1080,
+				optimizedPreview.sourceDimensions?.width ||
+					videoPlaybackRef.current?.video?.videoWidth ||
+					1920,
+				optimizedPreview.sourceDimensions?.height ||
+					videoPlaybackRef.current?.video?.videoHeight ||
+					1080,
 				gifSizePreset,
 				GIF_SIZE_PRESETS,
 			),
-		[gifSizePreset],
+		[gifSizePreset, optimizedPreview.sourceDimensions],
 	);
 
 	const mp4SourceDimensions = useMemo(() => {
 		const sourceVideo = isPreviewReady ? videoPlaybackRef.current?.video : null;
 		return {
-			width: sourceVideo?.videoWidth || 1920,
-			height: sourceVideo?.videoHeight || 1080,
+			width: optimizedPreview.sourceDimensions?.width || sourceVideo?.videoWidth || 1920,
+			height: optimizedPreview.sourceDimensions?.height || sourceVideo?.videoHeight || 1080,
 		};
-	}, [isPreviewReady]);
+	}, [isPreviewReady, optimizedPreview.sourceDimensions]);
 
 	const desiredMp4SourceDimensions = useMemo(() => {
 		return calculateMp4SourceDimensions(
@@ -3750,6 +3768,8 @@ export default function VideoEditor() {
 		setDefaultSourceAudioTrackSettings,
 		currentTime,
 		timelineTime: timelinePlayheadTime,
+		previewSeekVersion,
+		playbackVideo,
 		duration,
 		isPlaying,
 		previewVolume,
@@ -3801,6 +3821,7 @@ export default function VideoEditor() {
 			}
 
 			video.currentTime = mapTimelineTimeToSourceTime(time * 1000) / 1000;
+			setPreviewSeekVersion((version) => version + 1);
 		},
 		[getActivePlayback, mapTimelineTimeToSourceTime],
 	);
@@ -5446,8 +5467,8 @@ export default function VideoEditor() {
 			return;
 		}
 
-		const sourceWidth = video.videoWidth || 1920;
-		const sourceHeight = video.videoHeight || 1080;
+		const sourceWidth = mp4SourceDimensions.width;
+		const sourceHeight = mp4SourceDimensions.height;
 		const settings = resolveExportStartSettings({
 			sourceWidth,
 			sourceHeight,
@@ -5481,6 +5502,7 @@ export default function VideoEditor() {
 		exportBackendPreference,
 		exportPipelineModel,
 		handleExport,
+		mp4SourceDimensions,
 	]);
 
 	const handleCancelExport = useCallback(() => {
@@ -5677,16 +5699,18 @@ export default function VideoEditor() {
 		keySuffix: "inline" | "fullscreen",
 	) => (
 		<VideoPlayback
-			key={`${videoPath || "no-video"}:${previewVersion}:${keySuffix}`}
+			key={`${optimizedPreview.videoUrl || videoPath || "no-video"}:${previewVersion}:${keySuffix}`}
 			aspectRatio={aspectRatio}
 			ref={playbackRef}
-			videoPath={videoPath || ""}
+			videoPath={optimizedPreview.videoUrl || videoPath || ""}
+			sourceDimensions={optimizedPreview.sourceDimensions ?? undefined}
 			onDurationChange={setDuration}
 			onPreviewReadyChange={setIsPreviewReady}
+			onVideoElementChange={playbackRef ? setPlaybackVideo : undefined}
 			onTimeUpdate={setCurrentTime}
 			currentTime={currentTime}
 			onPlayStateChange={setIsPlaying}
-			onError={setError}
+			onError={optimizedPreview.videoUrl ? optimizedPreview.onError : setError}
 			wallpaper={wallpaper}
 			zoomRegions={effectiveZoomRegions}
 			selectedZoomId={selectedZoomId}

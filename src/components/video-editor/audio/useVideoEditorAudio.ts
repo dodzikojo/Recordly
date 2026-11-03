@@ -1,11 +1,7 @@
 import React, { useMemo } from "react";
 import type { SourceAudioTrackSettings } from "@/components/video-editor/audio/audioTypes";
 import { resolveSourceTrackRoutingPolicy } from "@/lib/exporter/sourceTrackRoutingPolicy";
-import type {
-	AudioRegion,
-	ClipRegion,
-	SpeedRegion,
-} from "../types";
+import type { AudioRegion, ClipRegion, SpeedRegion } from "../types";
 import { getActiveClipIdAtSourceTime, isClipMutedById } from "./clipAudio";
 import { useAudioPreviewSync } from "./useAudioPreviewSync";
 import { useClipAudioSettingsController } from "./useClipAudioSettingsController";
@@ -42,6 +38,8 @@ interface UseVideoEditorAudioParams {
 	>;
 	currentTime: number;
 	timelineTime: number;
+	previewSeekVersion: number;
+	playbackVideo?: HTMLVideoElement | null;
 	duration: number;
 	isPlaying: boolean;
 	previewVolume: number;
@@ -62,6 +60,8 @@ export function useVideoEditorAudio({
 	setDefaultSourceAudioTrackSettings,
 	currentTime,
 	timelineTime,
+	previewSeekVersion,
+	playbackVideo,
 	duration,
 	isPlaying,
 	previewVolume,
@@ -122,6 +122,9 @@ export function useVideoEditorAudio({
 		isPlaying,
 		currentTime,
 		timelineTime,
+		clipRegions,
+		previewSeekVersion,
+		playbackVideo,
 		duration,
 		effectiveSpeedRegions,
 		previewSourceAudioFallbackPaths,

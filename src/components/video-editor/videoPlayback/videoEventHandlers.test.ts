@@ -34,6 +34,33 @@ function createMockVideo(overrides: Partial<MockVideo> = {}): MockVideo {
 }
 
 describe("createVideoEventHandlers", () => {
+	it("does not seek backward again when the presented cut-edge frame precedes an already completed seek", () => {
+		let frame: PresentedFrameCallback | undefined;
+		const video = createMockVideo({
+			currentTime: 2.05,
+			requestVideoFrameCallback: vi.fn((callback) => {
+				frame = callback;
+				return 1;
+			}),
+		});
+		const onTimeUpdate = vi.fn();
+		const handlers = createVideoEventHandlers({
+			video,
+			isSeekingRef: createMutableRef(false),
+			isPlayingRef: createMutableRef(false),
+			allowPlaybackRef: createMutableRef(true),
+			currentTimeRef: createMutableRef(2000),
+			timeUpdateAnimationRef: createMutableRef<number | null>(null),
+			onPlayStateChange: vi.fn(),
+			onTimeUpdate,
+			trimRegionsRef: createMutableRef([{ id: "cut", startMs: 1000, endMs: 2000 }]),
+			speedRegionsRef: createMutableRef([]),
+		});
+		handlers.handlePlay();
+		frame?.(0, { mediaTime: 1.9999 });
+		expect(video.currentTime).toBe(2.05);
+		expect(onTimeUpdate).not.toHaveBeenCalledWith(1.9999);
+	});
 	const emitEventMock = vi.mocked(extensionHost.emitEvent);
 	let requestAnimationFrameMock: ReturnType<typeof vi.fn>;
 	let cancelAnimationFrameMock: ReturnType<typeof vi.fn>;
