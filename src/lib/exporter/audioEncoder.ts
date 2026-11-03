@@ -1,5 +1,6 @@
 import { WebDemuxer } from "web-demuxer";
 import { SOURCE_AUDIO_NORMALIZE_GAIN } from "@/components/video-editor/audio/audioTypes";
+import { getUserAudioOutputRegion } from "@/components/video-editor/audio/previewAudioTiming";
 import type {
 	AudioRegion,
 	ClipRegion,
@@ -795,6 +796,21 @@ export class AudioProcessor {
 
 		// Build timeline slices (non-trimmed segments with speed info)
 		const slices = this.buildTimelineSlices(sourceDurationMs, trimRegions, speedRegions);
+		// User overlays have their own duration. Video cuts/speed only determine
+		// their placed start in the edited output, not their tempo or length.
+		for (const entry of regionEntries) {
+			const region = entry.region;
+			if (clipRegions?.length) {
+				entry.region = getUserAudioOutputRegion(region, clipRegions);
+			} else {
+				const startMs = this.sourceTimeToOutputTime(region.startMs, slices);
+				entry.region = {
+					...region,
+					startMs,
+					endMs: startMs + region.endMs - region.startMs,
+				};
+			}
+		}
 
 		let outputDurationMs = 0;
 		for (const slice of slices) {
@@ -803,8 +819,7 @@ export class AudioProcessor {
 
 		// Extend for audio regions that might exceed the video timeline
 		for (const { region } of regionEntries) {
-			const regionEndOutput = this.sourceTimeToOutputTime(region.endMs, slices);
-			outputDurationMs = Math.max(outputDurationMs, regionEndOutput);
+			outputDurationMs = Math.max(outputDurationMs, region.endMs);
 		}
 
 		const numChannels = Math.min(primaryBuffer?.numberOfChannels ?? 2, 2);
@@ -979,14 +994,7 @@ export class AudioProcessor {
 
 			// Schedule audio region overlays
 			for (const { buffer, region } of prepared.regionEntries) {
-				this.scheduleRegionForChunk(
-					offlineCtx,
-					buffer,
-					region,
-					slices,
-					outputOffsetSec,
-					chunkSec,
-				);
+				this.scheduleRegionForChunk(offlineCtx, buffer, region, outputOffsetSec, chunkSec);
 			}
 
 			const rendered = await offlineCtx.startRendering();
@@ -1005,12 +1013,11 @@ export class AudioProcessor {
 		ctx: OfflineAudioContext,
 		buffer: AudioBuffer,
 		region: AudioRegion,
-		slices: TimelineSlice[],
 		chunkOutputStartSec: number,
 		chunkDurationSec: number,
 	): void {
-		const outputStartMs = this.sourceTimeToOutputTime(region.startMs, slices);
-		const outputEndMs = this.sourceTimeToOutputTime(region.endMs, slices);
+		const outputStartMs = region.startMs;
+		const outputEndMs = region.endMs;
 
 		let localStartSec = outputStartMs / 1000 - chunkOutputStartSec;
 		let localEndSec = outputEndMs / 1000 - chunkOutputStartSec;

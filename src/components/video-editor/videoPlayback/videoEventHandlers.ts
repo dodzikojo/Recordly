@@ -138,7 +138,11 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 
 		// If we're in a trim region during playback, skip to the end of it
 		if (activeTrimRegion && !video.paused && !video.ended) {
-			skipPastTrimRegion(activeTrimRegion);
+			// A decoded frame may round just before the cut endpoint even after
+			// the media clock passed it. Seeking again would restart decoding.
+			if (video.currentTime * 1000 < activeTrimRegion.endMs) {
+				skipPastTrimRegion(activeTrimRegion);
+			}
 		} else {
 			// Apply playback speed from active speed region
 			const activeSpeedRegion = findActiveSpeedRegion(currentTimeMs);

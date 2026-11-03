@@ -837,6 +837,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			{ success: true; url: string } | { success: false }
 		>;
 	},
+	prepareVideoPreview: (filePath: string) =>
+		ipcRenderer.invoke("prepare-video-preview", filePath),
 	saveProjectFile: (
 		projectData: unknown,
 		suggestedName?: string,

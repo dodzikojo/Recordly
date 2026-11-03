@@ -323,8 +323,10 @@ function getEffectiveNativeAspectRatio(
 
 interface VideoPlaybackProps {
 	videoPath: string;
+	sourceDimensions?: { width: number; height: number };
 	onDurationChange: (duration: number) => void;
 	onPreviewReadyChange?: (ready: boolean) => void;
+	onVideoElementChange?: (video: HTMLVideoElement | null) => void;
 	onTimeUpdate: (time: number) => void;
 	currentTime: number;
 	onPlayStateChange: (playing: boolean) => void;
@@ -408,8 +410,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 	(
 		{
 			videoPath,
+			sourceDimensions,
 			onDurationChange,
 			onPreviewReadyChange,
+			onVideoElementChange,
 			onTimeUpdate,
 			currentTime,
 			onPlayStateChange,
@@ -479,6 +483,13 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		ref,
 	) => {
 		const videoRef = useRef<HTMLVideoElement | null>(null);
+		const attachVideo = useCallback(
+			(video: HTMLVideoElement | null) => {
+				videoRef.current = video;
+				onVideoElementChange?.(video);
+			},
+			[onVideoElementChange],
+		);
 		const previewFrameRef = useRef<HTMLDivElement | null>(null);
 		const containerRef = useRef<HTMLDivElement | null>(null);
 		const appRef = useRef<Application | null>(null);
@@ -2769,8 +2780,8 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 			// Push video info to extension host for query APIs
 			extensionHost.setVideoInfo({
-				width: video.videoWidth,
-				height: video.videoHeight,
+				width: sourceDimensions?.width ?? video.videoWidth,
+				height: sourceDimensions?.height ?? video.videoHeight,
 				durationMs: Number.isFinite(video.duration) ? video.duration * 1000 : 0,
 				fps: 60, // Not available from HTMLVideoElement; default to 60
 			});
@@ -3393,7 +3404,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				{/* Keep the source video off-screen instead of display:none so the
 					browser continues producing presented frames for Pixi and preview sync. */}
 				<video
-					ref={videoRef}
+					ref={attachVideo}
 					src={videoPath}
 					className={fallbackVideoClassName}
 					preload="metadata"
