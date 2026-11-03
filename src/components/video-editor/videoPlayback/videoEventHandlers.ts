@@ -1,6 +1,6 @@
 import type React from "react";
 import { extensionHost } from "@/lib/extensions";
-import { enablePitchPreservingPlayback } from "@/lib/mediaTiming";
+import { enablePitchPreservingPlayback, setMediaPlaybackRate } from "@/lib/mediaTiming";
 import type { SpeedRegion, TrimRegion } from "../types";
 
 interface PresentedFrameMetadata {
@@ -138,7 +138,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 			// Apply playback speed from active speed region
 			const activeSpeedRegion = findActiveSpeedRegion(currentTimeMs);
 			enablePitchPreservingPlayback(video);
-			video.playbackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
+			setMediaPlaybackRate(video, activeSpeedRegion ? activeSpeedRegion.speed : 1);
 			emitTime(presentedTime);
 		}
 

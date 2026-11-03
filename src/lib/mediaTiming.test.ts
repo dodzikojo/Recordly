@@ -8,6 +8,7 @@ import {
 	getEffectiveVideoStreamDurationSeconds,
 	getMediaSyncPlaybackRate,
 	resolvePreviewMediaDuration,
+	setMediaPlaybackRate,
 } from "./mediaTiming";
 
 describe("clampMediaTimeToDuration", () => {
@@ -140,6 +141,68 @@ describe("enablePitchPreservingPlayback", () => {
 		expect(media.preservesPitch).toBe(true);
 		expect(media.mozPreservesPitch).toBe(true);
 		expect(media.webkitPreservesPitch).toBe(true);
+	});
+});
+
+describe("setMediaPlaybackRate", () => {
+	/** Chromium refuses playback rates outside 0.0625–16 with a NotSupportedError. */
+	function createChromiumLikeMedia(initialRate = 1) {
+		let rate = initialRate;
+		const media = {} as HTMLMediaElement;
+		Object.defineProperty(media, "playbackRate", {
+			get: () => rate,
+			set: (next: number) => {
+				if (next < 0.0625 || next > 16) {
+					throw new DOMException(
+						"not in the supported playback range",
+						"NotSupportedError",
+					);
+				}
+				rate = next;
+			},
+		});
+		return media;
+	}
+
+	it("caps clip speeds above the browser's maximum at 16x instead of throwing", () => {
+		const media = createChromiumLikeMedia();
+		expect(() => setMediaPlaybackRate(media, 20)).not.toThrow();
+		expect(media.playbackRate).toBe(16);
+		setMediaPlaybackRate(media, 30.08);
+		expect(media.playbackRate).toBe(16);
+	});
+
+	it("passes supported speeds through unchanged", () => {
+		const media = createChromiumLikeMedia();
+		setMediaPlaybackRate(media, 15.08);
+		expect(media.playbackRate).toBe(15.08);
+		setMediaPlaybackRate(media, 0.25);
+		expect(media.playbackRate).toBe(0.25);
+	});
+
+	it("raises speeds below the browser's minimum to it", () => {
+		const media = createChromiumLikeMedia();
+		setMediaPlaybackRate(media, 0.01);
+		expect(media.playbackRate).toBe(0.0625);
+	});
+
+	it("falls back to normal speed for unusable values", () => {
+		const media = createChromiumLikeMedia(2);
+		setMediaPlaybackRate(media, Number.NaN);
+		expect(media.playbackRate).toBe(1);
+		setMediaPlaybackRate(media, 0);
+		expect(media.playbackRate).toBe(1);
+	});
+
+	it("never lets a refused rate escape, so the editor stays up", () => {
+		const media = {} as HTMLMediaElement;
+		Object.defineProperty(media, "playbackRate", {
+			get: () => 1,
+			set: () => {
+				throw new DOMException("refused", "NotSupportedError");
+			},
+		});
+		expect(() => setMediaPlaybackRate(media, 2)).not.toThrow();
 	});
 });
 
