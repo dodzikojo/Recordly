@@ -128,6 +128,31 @@ export function enablePitchPreservingPlayback(media: HTMLMediaElement) {
 	pitchMedia.webkitPreservesPitch = true;
 }
 
+/** Chromium's supported HTMLMediaElement playback range; outside it the setter throws. */
+export const MIN_MEDIA_PLAYBACK_RATE = 0.0625;
+export const MAX_MEDIA_PLAYBACK_RATE = 16;
+
+/**
+ * Set a preview media element's speed. Clip speeds go up to 30x, past what the browser
+ * plays, so the preview caps at 16x (export still renders the real speed). A refused rate
+ * is logged instead of thrown: thrown from a React effect, it unmounts the whole editor.
+ */
+export function setMediaPlaybackRate(media: HTMLMediaElement, rate: number) {
+	const safeRate =
+		Number.isFinite(rate) && rate > 0
+			? Math.min(MAX_MEDIA_PLAYBACK_RATE, Math.max(MIN_MEDIA_PLAYBACK_RATE, rate))
+			: 1;
+	if (media.playbackRate === safeRate) {
+		return;
+	}
+
+	try {
+		media.playbackRate = safeRate;
+	} catch (error) {
+		console.warn("Preview playback rate was refused:", safeRate, error);
+	}
+}
+
 export function getEffectiveVideoStreamDurationSeconds({
 	duration,
 	streamDuration,

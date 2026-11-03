@@ -7,6 +7,7 @@ import {
   estimateCompanionAudioStartDelaySeconds,
   getMediaSyncPlaybackRate,
   resolvePreviewMediaDuration,
+  setMediaPlaybackRate,
 } from "@/lib/mediaTiming";
 import type { AudioRegion, SpeedRegion } from "../types";
 import {
@@ -363,7 +364,7 @@ export function useAudioPreviewSync({
           targetTime: audioOffset,
         });
         if (Math.abs(audio.playbackRate - syncedPlaybackRate) > 0.001) {
-          audio.playbackRate = syncedPlaybackRate;
+          setMediaPlaybackRate(audio, syncedPlaybackRate);
         }
         if (audio.paused) {
           audio.play().catch(() => undefined);
@@ -435,7 +436,7 @@ export function useAudioPreviewSync({
       // from continuous micro-corrections on system audio.
       const syncedPlaybackRate = targetPlaybackRate;
       if (Math.abs(audio.playbackRate - syncedPlaybackRate) > 0.001) {
-        audio.playbackRate = syncedPlaybackRate;
+        setMediaPlaybackRate(audio, syncedPlaybackRate);
       }
 
       const atEnd = audioDuration !== null && targetTime >= audioDuration;

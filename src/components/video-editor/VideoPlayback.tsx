@@ -17,6 +17,7 @@ import {
 	clampMediaTimeToDuration,
 	enablePitchPreservingPlayback,
 	getMediaSyncPlaybackRate,
+	setMediaPlaybackRate,
 } from "@/lib/mediaTiming";
 import {
 	destroyPixiApplication,
@@ -1620,7 +1621,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				maxAdjustment: 0.12,
 			});
 			if (Math.abs(bgVideo.playbackRate - syncedPlaybackRate) > 0.001) {
-				bgVideo.playbackRate = syncedPlaybackRate;
+				setMediaPlaybackRate(bgVideo, syncedPlaybackRate);
 			}
 
 			const previousTimelineTime = lastBackgroundSyncTimeRef.current;
@@ -1963,7 +1964,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			const targetPlaybackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
 			enablePitchPreservingPlayback(webcamVideo);
 			if (Math.abs(webcamVideo.playbackRate - targetPlaybackRate) > 0.001) {
-				webcamVideo.playbackRate = targetPlaybackRate;
+				setMediaPlaybackRate(webcamVideo, targetPlaybackRate);
 			}
 
 			const previousTimelineTime = lastWebcamSyncTimeRef.current;
