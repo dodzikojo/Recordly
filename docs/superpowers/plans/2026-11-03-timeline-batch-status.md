@@ -2,14 +2,14 @@
 
 User request: close existing gaps and close all gaps, then video clip multi-selection, group movement and shared settings. User explicitly chose video clips first. Size L; spec and slice plans are in this directory/specs; execution uses fresh implementation agents.
 
-As of 2026-11-03 15:32 UTC:
+Completed and merged on 2026-11-03, after the owner confirmed runtime testing worked well:
 
 - Playback fix merged on main in PR #8 (`0b8a9edf`).
-- Ripple delete: PR #9, branch `codex/ripple-delete-clips`, `6e20bee6`, open/unmerged.
-- Gap commands: PR #10, base `codex/ripple-delete-clips`, branch `codex/timeline-gap-commands`, `d94bd9a6`, open/unmerged. Parent independently verified actual gap clicks/Delete/context menu/Close All, Undo/Redo, source frames and save/reopen. Node22 tsc/build/lint/i18n pass; 139 test files,1315passed,2skipped. Details in the gap plan ledger.
-- Multi-select: [PR #11](https://github.com/dodzikojo/Recordly/pull/11), base `codex/timeline-gap-commands`, branch `codex/timeline-multi-select`, feature commit `b9f95682`, open/unmerged. Implementation, independent review and final verification are complete. Fresh implementation agents owned feature source/locales; parent owned the smoke driver and release verification.
+- Ripple delete: [PR #9](https://github.com/dodzikojo/Recordly/pull/9), merged into main as `09a88a19`.
+- Gap commands: [PR #10](https://github.com/dodzikojo/Recordly/pull/10), retargeted from the ripple branch to main and merged as `c817f4bc`. Parent independently verified actual gap clicks/Delete/context menu/Close All, Undo/Redo, source frames and save/reopen. Node22 tsc/build/lint/i18n pass; 139 test files,1315passed,2skipped. Details in the gap plan ledger.
+- Multi-select: [PR #11](https://github.com/dodzikojo/Recordly/pull/11), retargeted from the gap branch to main and merged as `4da59778`. Implementation, independent review and final verification are complete. Fresh implementation agents owned feature source/locales; parent owned the smoke driver and release verification.
 
-Next: owner testing/review. All feature PRs remain unmerged pending the owner's merge instruction. Merge order is ripple delete (#9), gap commands (#10), then multi-select (#11). The current checkout includes all three slices and is ready for `npm run dev`.
+No implementation work remains. All three PRs were merged in order (#9, #10, #11), preserving the tested commits. The checkout is back on main; the merged tree was verified identical to the tested multi-select branch before this status-only update. Main includes all three slices and is ready for `npm run dev`.
 
 Slice 2 review: pure selection/group/cut/audio planners received independent read-only review. Fixed inherited integer speed-rounding drift with compatible optional exact source ends; reviewed/fixed near-edge splitting and auto-track extension as well. History includes selected IDs, source-audio settings and explicit-empty trims; canonical snapshot trims prevent duplicate Undo entries. A real pointer smoke found and verified the fix for dnd-kit suppressing plain selected-member clicks: collapse selection on pointer-up with movement/modifier guards.
 
