@@ -205,4 +205,38 @@ describe("createVideoEventHandlers", () => {
 		expect(video.currentTime).toBe(2);
 		expect(onTimeUpdate).toHaveBeenLastCalledWith(2);
 	});
+
+	it("rejects a stale frame after crossing a cut and applies the destination speed before resuming", () => {
+		const callbacks: PresentedFrameCallback[] = [];
+		const video = createMockVideo({
+			requestVideoFrameCallback: vi.fn((callback) => {
+				callbacks.push(callback);
+				return callbacks.length;
+			}),
+			cancelVideoFrameCallback: vi.fn(),
+		});
+		const onTimeUpdate = vi.fn();
+		const handlers = createVideoEventHandlers({
+			video,
+			isSeekingRef: createMutableRef(false),
+			isPlayingRef: createMutableRef(false),
+			allowPlaybackRef: createMutableRef(true),
+			currentTimeRef: createMutableRef(0),
+			timeUpdateAnimationRef: createMutableRef<number | null>(null),
+			onPlayStateChange: vi.fn(),
+			onTimeUpdate,
+			trimRegionsRef: createMutableRef([]),
+			speedRegionsRef: createMutableRef([
+				{ id: "speed", startMs: 5000, endMs: 8000, speed: 2 },
+			]),
+		});
+		handlers.handlePlay();
+		video.currentTime = 5;
+		handlers.handleSeeking();
+		callbacks[0](0, { mediaTime: 0.5 });
+		expect(onTimeUpdate).toHaveBeenLastCalledWith(5);
+		handlers.handleSeeked();
+		expect(video.playbackRate).toBe(2);
+		expect(callbacks).toHaveLength(2);
+	});
 });

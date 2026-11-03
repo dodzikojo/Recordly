@@ -42,6 +42,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 	} = params;
 	const presentedFrameVideo = video as PresentedFrameVideoElement;
 	let videoFrameRequestId: number | null = null;
+	let updateGeneration = 0;
 	enablePitchPreservingPlayback(video);
 
 	const emitTime = (timeValue: number) => {
@@ -82,6 +83,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 	};
 
 	const cancelScheduledUpdate = () => {
+		updateGeneration += 1;
 		if (timeUpdateAnimationRef.current !== null) {
 			cancelAnimationFrame(timeUpdateAnimationRef.current);
 			timeUpdateAnimationRef.current = null;
@@ -97,15 +99,17 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 	};
 
 	const scheduleNextUpdate = () => {
-		if (video.paused || video.ended) {
+		if (video.paused || video.ended || isSeekingRef.current || video.seeking) {
 			return;
 		}
 
 		// Align editor state with the frame Chromium actually presented instead of
 		// polling `currentTime` on a generic animation frame.
+		const generation = updateGeneration;
 		if (typeof presentedFrameVideo.requestVideoFrameCallback === "function") {
 			videoFrameRequestId = presentedFrameVideo.requestVideoFrameCallback(
 				(_now, metadata) => {
+					if (generation !== updateGeneration) return;
 					videoFrameRequestId = null;
 					updateTime(metadata);
 				},
@@ -114,6 +118,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 		}
 
 		timeUpdateAnimationRef.current = requestAnimationFrame(() => {
+			if (generation !== updateGeneration) return;
 			timeUpdateAnimationRef.current = null;
 			updateTime();
 		});
@@ -125,7 +130,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 	}
 
 	function updateTime(metadata?: PresentedFrameMetadata) {
-		if (!video) return;
+		if (isSeekingRef.current || video.seeking) return;
 
 		const presentedTime = getPresentedTime(metadata);
 		const currentTimeMs = presentedTime * 1000;
@@ -152,6 +157,8 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 		}
 
 		isPlayingRef.current = true;
+		const speedRegion = findActiveSpeedRegion(video.currentTime * 1000);
+		setMediaPlaybackRate(video, speedRegion?.speed ?? 1);
 		onPlayStateChange(true);
 		cancelScheduledUpdate();
 		scheduleNextUpdate();
@@ -165,6 +172,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 	};
 
 	const handleSeeked = () => {
+		cancelScheduledUpdate();
 		isSeekingRef.current = false;
 
 		const currentTimeMs = video.currentTime * 1000;
@@ -174,11 +182,15 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 		if (activeTrimRegion) {
 			skipPastTrimRegion(activeTrimRegion);
 		} else {
+			const speedRegion = findActiveSpeedRegion(currentTimeMs);
+			setMediaPlaybackRate(video, speedRegion?.speed ?? 1);
 			emitTime(video.currentTime);
+			scheduleNextUpdate();
 		}
 	};
 
 	const handleSeeking = () => {
+		cancelScheduledUpdate();
 		isSeekingRef.current = true;
 		emitTime(video.currentTime);
 	};

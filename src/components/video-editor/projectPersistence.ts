@@ -31,6 +31,7 @@ import {
 	type CaptionCue,
 	type CaptionCueWord,
 	type ClipRegion,
+	normalizeLegacyClipSources,
 	type CropRegion,
 	type CursorClickEffectStyle,
 	type CursorStyle,
@@ -506,33 +507,38 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 				})
 		: [];
 
-	const normalizedClipRegions: ClipRegion[] = Array.isArray(editor.clipRegions)
-		? editor.clipRegions
-				.filter((region): region is ClipRegion =>
-					Boolean(region && typeof region.id === "string"),
-				)
-				.map((region) => {
-					const rawStart = isFiniteNumber(region.startMs)
-						? Math.round(region.startMs)
-						: 0;
-					const rawEnd = isFiniteNumber(region.endMs)
-						? Math.round(region.endMs)
-						: rawStart + 1000;
-					const startMs = Math.max(0, Math.min(rawStart, rawEnd));
-					const endMs = Math.max(startMs + 1, rawEnd);
-					return {
-						id: region.id,
-						startMs,
-						endMs,
-						speed: isFiniteNumber(region.speed) ? region.speed : 1,
-						muted: typeof region.muted === "boolean" ? region.muted : false,
-						showSourceAudio:
-							typeof region.showSourceAudio === "boolean"
-								? region.showSourceAudio
-								: false,
-					};
-				})
-		: [];
+	const normalizedClipRegions: ClipRegion[] = normalizeLegacyClipSources(
+		Array.isArray(editor.clipRegions)
+			? editor.clipRegions
+					.filter((region): region is ClipRegion =>
+						Boolean(region && typeof region.id === "string"),
+					)
+					.map((region) => {
+						const rawStart = isFiniteNumber(region.startMs)
+							? Math.round(region.startMs)
+							: 0;
+						const rawEnd = isFiniteNumber(region.endMs)
+							? Math.round(region.endMs)
+							: rawStart + 1000;
+						const startMs = Math.max(0, Math.min(rawStart, rawEnd));
+						const endMs = Math.max(startMs + 1, rawEnd);
+						return {
+							id: region.id,
+							startMs,
+							endMs,
+							speed: isFiniteNumber(region.speed) ? region.speed : 1,
+							...(isFiniteNumber(region.sourceStartMs)
+								? { sourceStartMs: Math.max(0, Math.round(region.sourceStartMs)) }
+								: {}),
+							muted: typeof region.muted === "boolean" ? region.muted : false,
+							showSourceAudio:
+								typeof region.showSourceAudio === "boolean"
+									? region.showSourceAudio
+									: false,
+						};
+					})
+			: [],
+	);
 
 	const normalizedAutoFullTrackClipId =
 		typeof editor.autoFullTrackClipId === "string" ? editor.autoFullTrackClipId : null;
