@@ -8,6 +8,7 @@ import type {
 import { useScopedT } from "@/contexts/I18nContext";
 import { useShortcuts } from "@/contexts/ShortcutsContext";
 import type { TimelineGap } from "../closeGaps";
+import { planClipGroupMove, type ClipSelectionModifiers } from "../clipBatchEditing";
 import { fromFileUrl } from "../projectPersistence";
 import type {
 	AnnotationRegion,
@@ -58,7 +59,10 @@ export interface TimelineEditorProps {
 	onClipSpanChange?: (id: string, span: Span) => void;
 	onClipDelete?: (id: string) => void;
 	selectedClipId?: string | null;
-	onSelectClip?: (id: string | null) => void;
+	selectedClipIds?: string[];
+	onSelectClip?: (id: string | null, modifiers?: ClipSelectionModifiers) => void;
+	onSelectAllClips?: () => void;
+	onClipGroupMove?: (ids: string[], deltaMs: number) => void;
 	annotationRegions?: AnnotationRegion[];
 	onAnnotationAdded?: (span: Span, trackIndex?: number) => void;
 	onAnnotationSpanChange?: (id: string, span: Span, trackIndex?: number) => void;
@@ -144,7 +148,10 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			onClipSpanChange,
 			onClipDelete,
 			selectedClipId,
+			selectedClipIds = [],
 			onSelectClip,
+			onSelectAllClips,
+			onClipGroupMove,
 			annotationRegions = [],
 			onAnnotationAdded,
 			onAnnotationSpanChange,
@@ -206,6 +213,47 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 
 		const [liveSpanPreviewById, setLiveSpanPreviewById] = useState<Record<string, Span>>({});
 		const [isDragging, setIsDragging] = useState(false);
+		const resolveClipGroupMove = (id: string, span: Span) => {
+			if (selectedClipIds.length < 2 || !selectedClipIds.includes(id)) return null;
+			const clip = clipRegions.find((candidate) => candidate.id === id);
+			if (!clip) return null;
+			const delta = Math.round(span.start - clip.startMs);
+			const plan = planClipGroupMove(
+				{
+					clipRegions,
+					zoomRegions,
+					annotationRegions,
+					audioRegions: [],
+					autoCaptions: [],
+					speedRegions: [],
+					selectedZoomId: null,
+					selectedClipId: id,
+					selectedAnnotationId: null,
+					selectedAudioId: null,
+				},
+				selectedClipIds,
+				delta,
+			);
+			const next = plan?.state ?? { clipRegions, zoomRegions, annotationRegions };
+			const spans: Record<string, Span> = {};
+			for (const region of [
+				...next.clipRegions,
+				...next.zoomRegions,
+				...next.annotationRegions,
+			]) {
+				if (
+					selectedClipIds.includes(region.id) ||
+					(plan &&
+						[...zoomRegions, ...annotationRegions].some(
+							(original) =>
+								original.id === region.id && original.startMs !== region.startMs,
+						))
+				) {
+					spans[region.id] = { start: region.startMs, end: region.endMs };
+				}
+			}
+			return { spans, deltaMs: plan?.deltaMs ?? 0 };
+		};
 		const liveZoomPreview = useMemo(() => {
 			const previewSpans: Record<string, Span> = { ...liveSpanPreviewById };
 			const hiddenZoomIds = new Set<string>();
@@ -213,6 +261,8 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			for (const [previewId, previewSpan] of Object.entries(liveSpanPreviewById)) {
 				const oldClip = clipRegions.find((clip) => clip.id === previewId);
 				if (!oldClip) continue;
+				// Group planners already preview exactly the owned overlays once.
+				if (selectedClipIds.length > 1 && selectedClipIds.includes(previewId)) continue;
 
 				const newStart = Math.round(previewSpan.start);
 				const newEnd = Math.round(previewSpan.end);
@@ -252,7 +302,7 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			}
 
 			return { previewSpans, hiddenZoomIds };
-		}, [clipRegions, liveSpanPreviewById, zoomRegions]);
+		}, [clipRegions, liveSpanPreviewById, zoomRegions, selectedClipIds]);
 		const { shortcuts: keyShortcuts, isMac } = useShortcuts();
 		const { peaks: sourceAudioPeaks, loading: sourceAudioLoading } = useTimelineAudioPeaks(
 			videoPath,
@@ -388,6 +438,7 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			onClipDelete,
 			selectedClipId,
 			onSelectClip,
+			onSelectAllClips,
 			annotationRegions,
 			onAnnotationAdded,
 			onAnnotationSpanChange,
@@ -452,6 +503,9 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 					onWheel={handleTimelineWheel}
 				>
 					<TimelineWrapper
+						resolveClipGroupMove={resolveClipGroupMove}
+						onClipGroupMove={(delta) => onClipGroupMove?.(selectedClipIds, delta)}
+						onLiveSpanPreviewsChange={setLiveSpanPreviewById}
 						range={clampedRange}
 						videoDuration={videoDuration}
 						hasOverlap={hasOverlap}
@@ -516,6 +570,7 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 							onSelectCaption={handleSelectCaption}
 							selectedZoomId={selectedZoomId}
 							selectedClipId={selectedClipId}
+							selectedClipIds={selectedClipIds}
 							selectedAnnotationId={selectedAnnotationId}
 							selectedAudioId={selectedAudioId}
 							selectedCaptionId={selectedCaptionId}

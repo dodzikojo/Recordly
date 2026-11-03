@@ -1,4 +1,9 @@
-import type { ClipRegion, ZoomRegion } from "./types";
+import {
+	getClipSourceEndMs,
+	getClipSourceStartMs,
+	type ClipRegion,
+	type ZoomRegion,
+} from "./types";
 
 export type ClipSpeedChangeBlockReason = "clip-overlap" | "zoom-overlap";
 
@@ -43,7 +48,7 @@ export function planClipSpeedChange(params: {
 	}
 
 	const oldSpeed = Number.isFinite(clip.speed) && clip.speed > 0 ? clip.speed : 1;
-	const sourceDurationMs = Math.max(0, clip.endMs - clip.startMs) * oldSpeed;
+	const sourceDurationMs = getClipSourceEndMs(clip) - getClipSourceStartMs(clip);
 	const newEndMs = Math.round(clip.startMs + sourceDurationMs / speed);
 	const nextClip = clipRegions
 		.filter((candidate) => candidate.id !== selectedClipId && candidate.startMs >= clip.endMs)
@@ -91,7 +96,12 @@ export function planClipSpeedChange(params: {
 	return {
 		clipRegions: clipRegions.map((candidate) =>
 			candidate.id === selectedClipId
-				? { ...candidate, speed, endMs: newEndMs }
+				? {
+						...candidate,
+						speed,
+						endMs: newEndMs,
+						sourceEndMs: getClipSourceEndMs(candidate),
+					}
 				: candidate,
 		),
 		zoomRegions: nextZoomRegions,

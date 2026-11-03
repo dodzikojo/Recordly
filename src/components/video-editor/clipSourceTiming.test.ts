@@ -12,6 +12,47 @@ import {
 } from "./types";
 
 describe("clip source timing", () => {
+	it("keeps both source spans positive when a slow clip is split near its edge", () => {
+		const result = splitClipRegion(
+			{ id: "a", startMs: 0, endMs: 2002, speed: 0.5, sourceStartMs: 0, sourceEndMs: 1001 },
+			2001,
+			"l",
+			"r",
+		);
+		expect(result).not.toBeNull();
+		const [left, right] = result!;
+		expect(getClipSourceEndMs(left)).toBe(right.sourceStartMs);
+		expect(getClipSourceEndMs(left)).toBe(1000);
+		expect(getClipSourceEndMs(right)).toBe(1001);
+	});
+	it("safely declines splits without two positive integer source spans", () => {
+		expect(
+			splitClipRegion(
+				{ id: "tiny", startMs: 0, endMs: 2, speed: 0.5, sourceStartMs: 0, sourceEndMs: 1 },
+				1,
+				"l",
+				"r",
+			),
+		).toBeNull();
+	});
+	it("preserves exact source ends through rounded-speed splits, moves and trims", () => {
+		const clip = {
+			id: "a",
+			startMs: 0,
+			endMs: 501,
+			speed: 2,
+			sourceStartMs: 1000,
+			sourceEndMs: 2001,
+		};
+		expect(getClipSourceEndMs(clip)).toBe(2001);
+		const [left, right] = splitClipRegion(clip, 250, "l", "r")!;
+		expect(getClipSourceEndMs(left)).toBe(1500);
+		expect(right.sourceStartMs).toBe(1500);
+		expect(getClipSourceEndMs(right)).toBe(2001);
+		expect(getClipSourceEndMs(resizeClipRegion(clip, 1000, 1501))).toBe(2001);
+		expect(getClipSourceEndMs(resizeClipRegion(clip, 10, 501))).toBe(2001);
+		expect(getClipSourceEndMs(resizeClipRegion(clip, 0, 500))).toBe(1999);
+	});
 	it("uses explicit source bounds for thumbnails and active source audio", () => {
 		const clip = { id: "a", startMs: 3000, endMs: 5000, speed: 5, sourceStartMs: 11000 };
 		const items = buildTimelineItems({
@@ -33,7 +74,7 @@ describe("clip source timing", () => {
 			3000,
 			"l",
 			"r",
-		);
+		)!;
 		expect(getClipSourceEndMs(left)).toBe(11000);
 		expect(mapTimelineTimeToSourceTime(3000, [left, right])).toBe(11000);
 		expect(mapSourceTimeToTimelineTime(16000, [left, right])).toBe(4000);

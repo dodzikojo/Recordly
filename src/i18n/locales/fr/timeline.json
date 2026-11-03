@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "Supprimer {{count}} clips",
+		"mixed": "Valeurs mixtes",
+		"selectedCount": "{{count}} clips sélectionnés",
+		"emptyEdit": "Aucun clip vidéo. Annulez pour restaurer le montage.",
+		"emptyExport": "Ajoutez un clip vidéo ou annulez la suppression avant d’exporter."
+	},
 	"gap": {
 		"shortLabel": "Espace",
 		"label": "Espace {{start}}–{{end}} s",

@@ -226,6 +226,8 @@ export interface ClipRegion {
 	id: string;
 	/** Original media position, independent of the clip's timeline position. */
 	sourceStartMs?: number;
+	/** Exact media end, retained when integer timeline durations are rounded by speed edits. */
+	sourceEndMs?: number;
 	startMs: number;
 	endMs: number;
 	speed: number;
@@ -240,6 +242,12 @@ export function getClipSourceStartMs(clip: ClipRegion): number {
 }
 
 export function getClipSourceEndMs(clip: ClipRegion): number {
+	if (
+		typeof clip.sourceEndMs === "number" &&
+		Number.isFinite(clip.sourceEndMs) &&
+		clip.sourceEndMs > getClipSourceStartMs(clip)
+	)
+		return clip.sourceEndMs;
 	const displayDurationMs = Math.max(0, clip.endMs - clip.startMs);
 	const speed = Number.isFinite(clip.speed) && clip.speed > 0 ? clip.speed : 1;
 	return Math.round(getClipSourceStartMs(clip) + displayDurationMs * speed);
@@ -250,16 +258,31 @@ export function splitClipRegion(
 	splitMs: number,
 	leftId: string,
 	rightId: string,
-): [ClipRegion, ClipRegion] {
+): [ClipRegion, ClipRegion] | null {
 	const split = Math.round(splitMs);
+	const sourceStart = getClipSourceStartMs(clip);
+	const sourceEnd = getClipSourceEndMs(clip);
+	if (split <= clip.startMs || split >= clip.endMs || sourceEnd - sourceStart < 2) return null;
+	const sourceSplit = Math.max(
+		sourceStart + 1,
+		Math.min(
+			sourceEnd - 1,
+			Math.round(sourceStart + (split - clip.startMs) * getSafeClipSpeed(clip)),
+		),
+	);
 	return [
-		{ ...clip, id: leftId, sourceStartMs: getClipSourceStartMs(clip), endMs: split },
+		{
+			...clip,
+			id: leftId,
+			sourceStartMs: sourceStart,
+			endMs: split,
+			sourceEndMs: sourceSplit,
+		},
 		{
 			...clip,
 			id: rightId,
-			sourceStartMs: Math.round(
-				getClipSourceStartMs(clip) + (split - clip.startMs) * getSafeClipSpeed(clip),
-			),
+			sourceStartMs: sourceSplit,
+			sourceEndMs: sourceEnd,
 			startMs: split,
 		},
 	];
@@ -272,6 +295,14 @@ export function resizeClipRegion(clip: ClipRegion, startMs: number, endMs: numbe
 		...clip,
 		startMs,
 		endMs,
+		...(clip.sourceEndMs === undefined
+			? {}
+			: {
+					sourceEndMs: Math.round(
+						getClipSourceEndMs(clip) +
+							(moving ? 0 : (endMs - clip.endMs) * getSafeClipSpeed(clip)),
+					),
+				}),
 		sourceStartMs: Math.max(
 			0,
 			Math.round(getClipSourceStartMs(clip) + (moving ? 0 : delta * getSafeClipSpeed(clip))),
@@ -461,7 +492,15 @@ export function extendAutoFullTrackClip(
 		return null;
 	}
 
-	return [{ ...clip, endMs: nextTotalDurationMs }];
+	return [
+		{
+			...clip,
+			endMs: nextTotalDurationMs,
+			...(clip.sourceEndMs === undefined
+				? {}
+				: { sourceEndMs: getClipSourceEndMs(clip) + nextTotalDurationMs - clip.endMs }),
+		},
+	];
 }
 
 /** Convert clip regions (kept segments) to trim regions (gaps to remove). */

@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "{{count}} Clips löschen",
+		"mixed": "Gemischt",
+		"selectedCount": "{{count}} Clips ausgewählt",
+		"emptyEdit": "Keine Videoclips. Mit Rückgängig wird der Schnitt wiederhergestellt.",
+		"emptyExport": "Füge einen Videoclip hinzu oder mache das Löschen vor dem Export rückgängig."
+	},
 	"gap": {
 		"shortLabel": "Lücke",
 		"label": "Lücke {{start}}–{{end}} s",

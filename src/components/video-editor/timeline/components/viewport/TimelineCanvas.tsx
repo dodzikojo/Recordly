@@ -17,6 +17,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { findTimelineGaps, type TimelineGap } from "../../../closeGaps";
 import type { ClipRegion } from "../../../types";
+import type { ClipSelectionModifiers } from "../../../clipBatchEditing";
 import {
 	CAPTION_ROW_ID,
 	CLIP_ROW_ID,
@@ -63,7 +64,7 @@ interface TimelineCanvasProps {
 	onSeek?: (time: number) => void;
 	canPlaceZoomAtMs?: (startMs: number) => boolean;
 	onSelectZoom?: (id: string | null) => void;
-	onSelectClip?: (id: string | null) => void;
+	onSelectClip?: (id: string | null, modifiers?: ClipSelectionModifiers) => void;
 	onSelectAnnotation?: (id: string | null) => void;
 	onSelectAudio?: (id: string | null) => void;
 	onSelectCaption?: (id: string | null) => void;
@@ -75,6 +76,7 @@ interface TimelineCanvasProps {
 	captionQuickAddEnabled?: boolean;
 	selectedZoomId: string | null;
 	selectedClipId?: string | null;
+	selectedClipIds?: string[];
 	selectedAnnotationId?: string | null;
 	selectedAudioId?: string | null;
 	selectedCaptionId?: string | null;
@@ -375,11 +377,12 @@ interface TimelineCanvasRowsProps {
 	selectAllBlocksActive: boolean;
 	selectedZoomId: string | null;
 	selectedClipId?: string | null;
+	selectedClipIds?: string[];
 	selectedAnnotationId?: string | null;
 	selectedAudioId?: string | null;
 	selectedCaptionId?: string | null;
 	onSelectZoom?: (id: string | null) => void;
-	onSelectClip?: (id: string | null) => void;
+	onSelectClip?: (id: string | null, modifiers?: ClipSelectionModifiers) => void;
 	onSelectAnnotation?: (id: string | null) => void;
 	onSelectAudio?: (id: string | null) => void;
 	onSelectCaption?: (id: string | null) => void;
@@ -458,6 +461,7 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 	selectAllBlocksActive,
 	selectedZoomId,
 	selectedClipId,
+	selectedClipIds = [],
 	selectedAnnotationId,
 	selectedAudioId,
 	selectedCaptionId,
@@ -571,8 +575,9 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 						key={item.id}
 						rowId={item.rowId}
 						span={item.span}
-						isSelected={item.id === selectedClipId}
+						isSelected={selectedClipIds.includes(item.id) || item.id === selectedClipId}
 						onSelectId={onSelectClip}
+						previewSpan={liveSpanPreviewById?.[item.id]}
 						variant="clip"
 						speedValue={item.speedValue}
 					>
@@ -596,7 +601,10 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 										rowId={`${SOURCE_AUDIO_ROW_ID}-${track.id}`}
 										span={liveSpanPreviewById?.[item.id] ?? item.span}
 										disabled
-										isSelected={item.id === selectedClipId}
+										isSelected={
+											selectedClipIds.includes(item.id) ||
+											item.id === selectedClipId
+										}
 										onSelect={() => onSelectClip?.(item.id)}
 										variant="audio"
 										waveformPeaks={track.peaks}
@@ -661,6 +669,7 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 							rowId={item.rowId}
 							span={item.span}
 							isSelected={selectAllBlocksActive || item.id === selectedZoomId}
+							previewSpan={liveSpanPreviewById?.[item.id]}
 							onSelectId={onSelectZoom}
 							zoomDepth={item.zoomDepth}
 							zoomMode={item.zoomMode}
@@ -740,6 +749,7 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 							rowId={item.rowId}
 							span={item.span}
 							isSelected={item.id === selectedAnnotationId}
+							previewSpan={liveSpanPreviewById?.[item.id]}
 							onSelectId={onSelectAnnotation}
 							variant="annotation"
 						>
@@ -795,6 +805,7 @@ export default function TimelineCanvas({
 	onSelectCaption,
 	selectedZoomId,
 	selectedClipId,
+	selectedClipIds,
 	selectedAnnotationId,
 	selectedAudioId,
 	selectedCaptionId,
@@ -1072,6 +1083,7 @@ export default function TimelineCanvas({
 					selectAllBlocksActive={selectAllBlocksActive}
 					selectedZoomId={selectedZoomId}
 					selectedClipId={selectedClipId}
+					selectedClipIds={selectedClipIds}
 					selectedAnnotationId={selectedAnnotationId}
 					selectedAudioId={selectedAudioId}
 					selectedCaptionId={selectedCaptionId}

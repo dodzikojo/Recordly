@@ -69,7 +69,12 @@ function writeFixture() {
 				version: 1,
 				videoPath: sourcePath,
 				editor: {
-					clipRegions: clips,
+					clipRegions:
+						phase === "selection"
+							? clips.map((clip) =>
+									clip.id === "clip-a" ? { ...clip, endMs: 1501 } : clip,
+								)
+							: clips,
 					zoomRegions: [
 						{
 							id: "zoom-b",
@@ -149,6 +154,12 @@ async function state(page) {
 			captions: p.captionRegions,
 			selectedClipIds: p.selectedClipIds,
 			selectedClipId: p.selectedClipId,
+			sourceAudioSettings: Object.fromEntries(
+				p.clipRegions.map((clip) => [
+					clip.id,
+					p.getSourceAudioTrackSettingsForClip?.(clip.id),
+				]),
+			),
 			videoTime: document.querySelector("video")?.currentTime,
 		};
 	});
@@ -164,6 +175,271 @@ async function waitClipStart(page, id, start) {
 
 async function undo(page) {
 	await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+}
+
+async function waitSelected(page, ids) {
+	await page.waitForFunction((ids) => {
+		const actual = window.timelineSmoke.props()?.selectedClipIds || [];
+		return actual.length === ids.length && ids.every((id) => actual.includes(id));
+	}, ids);
+}
+
+const clipLocator = (page, id) => page.locator(`[data-clip-id="${id}"]`);
+
+async function selectPair(page, first, second) {
+	await page.keyboard.press("Escape");
+	await clipLocator(page, first).click();
+	await clipLocator(page, second).click({
+		modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
+	});
+	await waitSelected(page, [first, second]);
+}
+
+async function testSelection(page) {
+	await selectPair(page, "clip-a", "clip-b");
+	assert.equal(
+		await page
+			.locator('[data-clip-id][aria-pressed="true"], [data-clip-id][aria-selected="true"]')
+			.count(),
+		2,
+	);
+	await clipLocator(page, "clip-b").click();
+	await waitSelected(page, ["clip-b"]);
+	await clipLocator(page, "clip-d").click({ modifiers: ["Shift"] });
+	await waitSelected(page, ["clip-b", "clip-c", "clip-d"]);
+	await page.keyboard.press(process.platform === "darwin" ? "Meta+a" : "Control+a");
+	await waitSelected(
+		page,
+		clips.map((clip) => clip.id),
+	);
+	await page.keyboard.press("Escape");
+	await waitSelected(page, []);
+	console.log("PASS toggle/range/select-all/clear");
+
+	await selectPair(page, "clip-b", "clip-c");
+	const before = await state(page);
+	const box = await clipLocator(page, "clip-b").boundingBox();
+	const originalCBox = await clipLocator(page, "clip-c").boundingBox();
+	assert.ok(box);
+	const x = box.x + box.width / 2,
+		y = box.y + box.height / 2;
+	await page.mouse.move(x, y);
+	await page.mouse.down();
+	await page.mouse.move(x - box.width / 2, y, { steps: 12 });
+	await waitSelected(page, ["clip-b", "clip-c"]);
+	await page.waitForTimeout(50);
+	assert.ok(
+		(await clipLocator(page, "clip-c").boundingBox()).x < originalCBox.x - 1,
+		"group drag must preview the other selected clips",
+	);
+	await page.mouse.up();
+	await page.waitForFunction(
+		() =>
+			window.timelineSmoke.props().clipRegions.find((c) => c.id === "clip-b").startMs < 2500,
+	);
+	const moved = await state(page);
+	const delta = moved.clips[1].startMs - before.clips[1].startMs;
+	assert.ok(delta < 0 && delta >= -1000);
+	assert.equal(moved.clips[2].startMs - before.clips[2].startMs, delta);
+	assert.equal(moved.clips[0].startMs, before.clips[0].startMs);
+	assert.equal(moved.clips[3].startMs, before.clips[3].startMs);
+	assert.deepEqual(
+		moved.clips.map((c) => c.sourceStartMs),
+		[1000, 5000, 10000, 15000],
+	);
+	assert.equal(moved.zooms[0].startMs - before.zooms[0].startMs, delta);
+	assert.equal(
+		moved.annotations.find((a) => a.id === "annotation-c").startMs -
+			before.annotations.find((a) => a.id === "annotation-c").startMs,
+		delta,
+	);
+	assert.equal(moved.audio[0].startMs, 3000);
+	console.log("PASS group drag/source preservation", { delta });
+	await undo(page);
+	await waitClipStart(page, "clip-b", 2500);
+	assert.equal((await state(page)).clips[2].startMs, 4500);
+
+	await selectPair(page, "clip-b", "clip-c");
+	const cancelBox = await clipLocator(page, "clip-b").boundingBox();
+	await page.mouse.move(cancelBox.x + cancelBox.width / 2, cancelBox.y + cancelBox.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(cancelBox.x + cancelBox.width, cancelBox.y + cancelBox.height / 2, {
+		steps: 8,
+	});
+	await page.keyboard.press("Escape");
+	await page.mouse.up();
+	assert.deepEqual((await state(page)).clips, before.clips);
+	console.log("PASS group drag cancellation");
+
+	await selectPair(page, "clip-a", "clip-b");
+	const panel = page.locator('[class*="w-[332px]"]').first();
+	await panel.getByText("Mixed", { exact: true }).first().waitFor();
+	const originalSpeeds = (await state(page)).clips.map((c) => c.speed);
+	await panel.getByRole("button", { name: "0.25×", exact: true }).click();
+	assert.deepEqual(
+		(await state(page)).clips.map((c) => c.speed),
+		originalSpeeds,
+	);
+	await panel.getByRole("button", { name: "5×", exact: true }).click();
+	await page.waitForFunction(() =>
+		window.timelineSmoke
+			.props()
+			.clipRegions.slice(0, 2)
+			.every((c) => c.speed === 5),
+	);
+	assert.deepEqual(
+		(await state(page)).clips.map((c) => c.speed),
+		[5, 5, 1, 1],
+	);
+	const accelerated = await state(page);
+	assert.equal(
+		accelerated.clips[0].sourceEndMs ??
+			Math.round(
+				accelerated.clips[0].sourceStartMs +
+					(accelerated.clips[0].endMs - accelerated.clips[0].startMs) *
+						accelerated.clips[0].speed,
+			),
+		2001,
+	);
+	await undo(page);
+	await page.waitForFunction(
+		() =>
+			window.timelineSmoke.props().clipRegions[0].speed === 1 &&
+			window.timelineSmoke.props().clipRegions[1].speed === 2,
+	);
+	console.log("PASS mixed/bulk speed/atomic overlap/undo");
+
+	await panel
+		.getByText("Mute", { exact: true })
+		.locator("..")
+		.locator("..")
+		.getByRole("switch")
+		.click();
+	await page.waitForFunction(() =>
+		window.timelineSmoke
+			.props()
+			.clipRegions.slice(0, 2)
+			.every((c) => c.muted),
+	);
+	assert.deepEqual(
+		(await state(page)).clips.map((c) => Boolean(c.muted)),
+		[true, true, false, false],
+	);
+	await undo(page);
+	await page.waitForFunction(() =>
+		window.timelineSmoke.props().clipRegions.every((c) => !c.muted),
+	);
+	console.log("PASS bulk mute/undo");
+	await panel
+		.getByText("Separate clip from audio", { exact: true })
+		.locator("..")
+		.getByRole("switch")
+		.click();
+	await page.waitForFunction(() =>
+		window.timelineSmoke
+			.props()
+			.clipRegions.slice(0, 2)
+			.every((c) => c.showSourceAudio),
+	);
+	assert.deepEqual(
+		(await state(page)).clips.map((c) => Boolean(c.showSourceAudio)),
+		[true, true, false, false],
+	);
+	await undo(page);
+	await page.waitForFunction(() =>
+		window.timelineSmoke.props().clipRegions.every((c) => !c.showSourceAudio),
+	);
+	console.log("PASS bulk source-audio visibility/undo");
+
+	const volume = panel.getByRole("slider", { name: "Volume", exact: true }).first();
+	await volume.waitFor();
+	const audioBefore = await state(page);
+	const trackId = Object.keys(audioBefore.sourceAudioSettings["clip-a"])[0];
+	assert.ok(trackId);
+	await volume.press("ArrowLeft");
+	await page.waitForFunction((id) => {
+		const p = window.timelineSmoke.props();
+		return p.getSourceAudioTrackSettingsForClip("clip-a")[id].volume < 1;
+	}, trackId);
+	const audioAfter = await state(page);
+	assert.equal(
+		audioAfter.sourceAudioSettings["clip-a"][trackId].volume,
+		audioAfter.sourceAudioSettings["clip-b"][trackId].volume,
+	);
+	assert.equal(audioAfter.sourceAudioSettings["clip-c"][trackId].volume, 1);
+	assert.equal(
+		audioAfter.sourceAudioSettings["clip-a"][trackId].normalize,
+		audioBefore.sourceAudioSettings["clip-a"][trackId].normalize,
+	);
+	await undo(page);
+	await page.waitForFunction(
+		(id) =>
+			window.timelineSmoke.props().getSourceAudioTrackSettingsForClip("clip-a")[id].volume ===
+			1,
+		trackId,
+	);
+	assert.equal((await state(page)).sourceAudioSettings["clip-b"][trackId].volume, 1);
+	console.log("PASS bulk source volume/field isolation/undo");
+
+	await panel.getByText("Normalize", { exact: true }).locator("..").getByRole("switch").click();
+	await page.waitForFunction(
+		(id) =>
+			window.timelineSmoke.props().getSourceAudioTrackSettingsForClip("clip-a")[id].normalize,
+		trackId,
+	);
+	const normalized = await state(page);
+	assert.equal(normalized.sourceAudioSettings["clip-b"][trackId].normalize, true);
+	assert.equal(normalized.sourceAudioSettings["clip-c"][trackId].normalize, false);
+	assert.equal(normalized.audio[0].endMs - normalized.audio[0].startMs, 8000);
+	await persistAndReopen(page, normalized.clips, (editor) =>
+		["clip-a", "clip-b"].every(
+			(id) => editor.sourceAudioTrackSettingsByClip?.[id]?.[trackId]?.normalize === true,
+		),
+	);
+	assert.equal((await state(page)).sourceAudioSettings["clip-b"][trackId].normalize, true);
+	await waitSelected(page, []);
+	console.log("PASS bulk normalization/history/persistence");
+	await page.screenshot({ path: path.join(profile, "selection-settings.png") });
+
+	await clipLocator(page, "clip-a").click();
+	await page.keyboard.press(process.platform === "darwin" ? "Meta+a" : "Control+a");
+	await waitSelected(
+		page,
+		clips.map((clip) => clip.id),
+	);
+	await page.keyboard.press("Delete");
+	await page.waitForFunction(() => window.timelineSmoke.props().clipRegions.length === 0);
+	assert.equal(
+		await page.getByRole("button", { name: "Export", exact: true }).isDisabled(),
+		true,
+	);
+	await undo(page);
+	await page.waitForFunction(() => window.timelineSmoke.props().clipRegions.length === 4);
+	assert.deepEqual((await state(page)).clips, normalized.clips);
+	await page.keyboard.press(process.platform === "darwin" ? "Meta+Shift+z" : "Control+Shift+z");
+	await page.waitForFunction(() => window.timelineSmoke.props().clipRegions.length === 0);
+	const saveDeadline = Date.now() + 10000;
+	while (
+		Date.now() < saveDeadline &&
+		JSON.parse(fs.readFileSync(projectPath, "utf8")).editor.clipRegions.length !== 0
+	)
+		await page.waitForTimeout(200);
+	const emptyProject = JSON.parse(fs.readFileSync(projectPath, "utf8"));
+	assert.equal(emptyProject.editor.clipRegions.length, 0);
+	assert.ok(
+		emptyProject.editor.trimRegions.some((trim) => trim.startMs === 0 && trim.endMs >= 20000),
+	);
+	await page.reload();
+	await page.waitForFunction(
+		() =>
+			document.querySelector("video")?.readyState >= 2 &&
+			window.timelineSmoke.props()?.clipRegions.length === 0,
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Export", exact: true }).isDisabled(),
+		true,
+	);
+	console.log("PASS all-clips deletion/one undo/redo/empty project persistence");
 }
 
 async function testGaps(page) {
@@ -221,14 +497,19 @@ async function testGaps(page) {
 	await persistAndReopen(page, snapshot.clips);
 }
 
-async function persistAndReopen(page, expected) {
+async function persistAndReopen(page, expected, savedMatches = () => true) {
 	const deadline = Date.now() + 10000;
 	while (Date.now() < deadline) {
 		const saved = JSON.parse(fs.readFileSync(projectPath, "utf8"));
-		if (JSON.stringify(saved.editor.clipRegions) === JSON.stringify(expected)) break;
+		if (
+			JSON.stringify(saved.editor.clipRegions) === JSON.stringify(expected) &&
+			savedMatches(saved.editor)
+		)
+			break;
 		await page.waitForTimeout(200);
 	}
 	assert.deepEqual(JSON.parse(fs.readFileSync(projectPath, "utf8")).editor.clipRegions, expected);
+	assert.ok(savedMatches(JSON.parse(fs.readFileSync(projectPath, "utf8")).editor));
 	assert.equal(
 		JSON.parse(fs.readFileSync(projectPath, "utf8")).editor.autoCaptions[0].startMs,
 		5500,
@@ -308,9 +589,21 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});
 				window.timelineSmoke.props()?.clipRegions.length === 4,
 		);
 		if (phase === "gaps") await testGaps(page);
+		else if (phase === "selection") await testSelection(page);
 		else throw new Error(`Unknown smoke phase: ${phase}`);
 		await page.screenshot({ path: path.join(profile, `${phase}.png`) });
 		console.log(`Timeline ${phase} smoke passed. Artifacts: ${profile}`);
+	} catch (error) {
+		if (app) {
+			const page = (await app.windows())[0];
+			if (page) {
+				console.error("Failure state:", await state(page).catch(() => null));
+				await page
+					.screenshot({ path: path.join(profile, `${phase}-failure.png`) })
+					.catch(() => undefined);
+			}
+		}
+		throw error;
 	} finally {
 		if (app) {
 			await app

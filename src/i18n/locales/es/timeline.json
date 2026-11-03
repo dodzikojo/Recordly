@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "Eliminar {{count}} clips",
+		"mixed": "Mixto",
+		"selectedCount": "{{count}} clips seleccionados",
+		"emptyEdit": "No hay clips de vídeo. Deshaz para restaurar la edición.",
+		"emptyExport": "Añade un clip de vídeo o deshaz la eliminación antes de exportar."
+	},
 	"gap": {
 		"shortLabel": "Hueco",
 		"label": "Hueco {{start}}–{{end}} s",

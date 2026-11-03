@@ -77,6 +77,29 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("timeline gap keyboard commands", () => {
+	it("selects all clips in clip context and retains zoom select-all outside it", () => {
+		const params = setup({
+			selectedGap: null,
+			selectedClipId: "a",
+			activateSelectAllClips: vi.fn(),
+		});
+		press("a", { ctrlKey: true });
+		expect(params.activateSelectAllClips).toHaveBeenCalledOnce();
+		expect(params.activateSelectAllZooms).not.toHaveBeenCalled();
+		const zoom = setup({ selectedGap: null, selectedZoomId: "zoom" });
+		press("a", { ctrlKey: true });
+		expect(zoom.activateSelectAllZooms).toHaveBeenCalledOnce();
+	});
+	it("clears clip selection with Escape even after settings focus", () => {
+		const params = setup({
+			selectedGap: null,
+			selectedClipId: "a",
+			isTimelineFocusedRef: { current: false },
+			clearSelectedBlocks: vi.fn(),
+		});
+		press("Escape");
+		expect(params.clearSelectedBlocks).toHaveBeenCalledOnce();
+	});
 	it.each([
 		"Delete",
 		"Backspace",

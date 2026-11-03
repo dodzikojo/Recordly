@@ -5,7 +5,9 @@ import type {
 	ClipRegion,
 	SpeedRegion,
 	ZoomRegion,
+	TrimRegion,
 } from "./types";
+import type { SourceAudioTrackSettings } from "./audio/audioTypes";
 
 export type EditorHistorySnapshot = {
 	zoomRegions: ZoomRegion[];
@@ -18,6 +20,11 @@ export type EditorHistorySnapshot = {
 	selectedClipId: string | null;
 	selectedAnnotationId: string | null;
 	selectedAudioId: string | null;
+	selectedClipIds?: string[];
+	clipSelectionAnchorId?: string | null;
+	trimRegions?: TrimRegion[];
+	sourceAudioTrackSettingsByClip?: Record<string, SourceAudioTrackSettings>;
+	defaultSourceAudioTrackSettings?: SourceAudioTrackSettings;
 };
 
 export type EditorHistoryStack = {
@@ -44,9 +51,7 @@ export function resetEditorHistoryStack(stack: EditorHistoryStack): void {
 	stack.future = [];
 }
 
-export function cloneEditorHistorySnapshot(
-	snapshot: EditorHistorySnapshot,
-): EditorHistorySnapshot {
+export function cloneEditorHistorySnapshot(snapshot: EditorHistorySnapshot): EditorHistorySnapshot {
 	return globalThis.structuredClone(snapshot);
 }
 
@@ -93,6 +98,7 @@ export function recordEditorHistorySnapshot(
 	options: {
 		applyingHistory?: boolean;
 		maxEntries?: number;
+		ignoreSelectionChanges?: boolean;
 	} = {},
 ): EditorHistoryRecordResult {
 	const clonedSnapshot = cloneEditorHistorySnapshot(snapshot);
@@ -109,6 +115,24 @@ export function recordEditorHistorySnapshot(
 
 	if (areEditorHistorySnapshotsEqual(stack.current, snapshot)) {
 		return "unchanged";
+	}
+	if (options.ignoreSelectionChanges) {
+		const content = (value: EditorHistorySnapshot) => {
+			const {
+				selectedZoomId: _zoom,
+				selectedClipId: _clip,
+				selectedClipIds: _clips,
+				clipSelectionAnchorId: _anchor,
+				selectedAnnotationId: _annotation,
+				selectedAudioId: _audio,
+				...rest
+			} = value;
+			return rest;
+		};
+		if (areDeepEqual(content(stack.current), content(snapshot))) {
+			stack.current = clonedSnapshot;
+			return "unchanged";
+		}
 	}
 
 	stack.past.push(cloneEditorHistorySnapshot(stack.current));

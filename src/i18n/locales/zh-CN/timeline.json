@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "删除 {{count}} 个片段",
+		"mixed": "混合",
+		"selectedCount": "已选择 {{count}} 个片段",
+		"emptyEdit": "没有视频片段。撤销以恢复编辑。",
+		"emptyExport": "请添加视频片段或撤销删除后再导出。"
+	},
 	"gap": {
 		"shortLabel": "间隙",
 		"label": "间隙 {{start}}–{{end}} 秒",

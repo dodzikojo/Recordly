@@ -9,8 +9,9 @@ import {
 	MagnifyingGlassPlus as ZoomIn,
 } from "@phosphor-icons/react";
 import type { Span } from "dnd-timeline";
-import { useItem } from "dnd-timeline";
-import { useMemo } from "react";
+import { useItem, useTimelineContext } from "dnd-timeline";
+import { useMemo, useRef } from "react";
+import type { ClipSelectionModifiers } from "../clipBatchEditing";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatClipSpeedLabel } from "../clipSpeedChange";
@@ -26,7 +27,8 @@ interface ItemProps {
 	children: React.ReactNode;
 	isSelected?: boolean;
 	onSelect?: () => void;
-	onSelectId?: (id: string) => void;
+	onSelectId?: (id: string, modifiers?: ClipSelectionModifiers) => void;
+	previewSpan?: Span;
 	zoomDepth?: number;
 	zoomMode?: "auto" | "manual";
 	speedValue?: number;
@@ -68,6 +70,7 @@ export default function Item({
 	isSelected = false,
 	onSelect,
 	onSelectId,
+	previewSpan,
 	zoomDepth = 1,
 	zoomMode = "auto",
 	speedValue,
@@ -87,6 +90,8 @@ export default function Item({
 		disabled: disabled || isLoading,
 		data: { rowId },
 	});
+	const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+	const { range, direction, valueToPixels } = useTimelineContext();
 
 	const timeLabel = useMemo(
 		() => `${formatMs(span.start)} – ${formatMs(span.end)}`,
@@ -144,12 +149,33 @@ export default function Item({
 							: glassStyles.glassYellow;
 
 	const MIN_ITEM_PX = 6;
-	const handleSelect = () => {
+	const handleSelect = (event: React.PointerEvent<HTMLDivElement>) => {
+		if (event.button !== 0) return;
+		pointerStartRef.current = { x: event.clientX, y: event.clientY };
 		onSelect?.();
-		onSelectId?.(id);
+		onSelectId?.(
+			id,
+			variant === "clip"
+				? {
+						toggle: event.ctrlKey || event.metaKey,
+						range: event.shiftKey,
+						preserve: isSelected,
+					}
+				: undefined,
+		);
 	};
 	const safeItemStyle = {
 		...itemStyle,
+		...(previewSpan
+			? {
+					[direction === "rtl" ? "right" : "left"]: valueToPixels(
+						previewSpan.start - range.start,
+					),
+					[direction === "rtl" ? "left" : "right"]: "auto",
+					width: valueToPixels(previewSpan.end - previewSpan.start),
+					transform: "none",
+				}
+			: {}),
 		minWidth: MIN_ITEM_PX,
 		height: "100%",
 		overflow: "hidden",
@@ -162,7 +188,26 @@ export default function Item({
 			{...listeners}
 			{...attributes}
 			data-timeline-item="true"
+			data-clip-id={isClip ? id : undefined}
+			aria-pressed={isClip ? isSelected : undefined}
+			data-selected={isSelected ? "true" : "false"}
 			onPointerDownCapture={handleSelect}
+			// dnd-kit's pointer sensor suppresses native click after activation,
+			// even without movement. Resolve a plain click on pointer-up instead.
+			onPointerUpCapture={(event) => {
+				const start = pointerStartRef.current;
+				if (
+					isClip &&
+					event.button === 0 &&
+					start &&
+					!event.ctrlKey &&
+					!event.metaKey &&
+					!event.shiftKey &&
+					Math.hypot(event.clientX - start.x, event.clientY - start.y) < 4
+				) {
+					onSelectId?.(id);
+				}
+			}}
 			className="group h-full"
 		>
 			<div

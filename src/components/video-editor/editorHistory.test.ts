@@ -27,6 +27,27 @@ function createSnapshot(id: string | null): EditorHistorySnapshot {
 }
 
 describe("editorHistory", () => {
+	it("keeps clip selection transient while recording source audio and empty-edit trims", () => {
+		const stack = createEditorHistoryStack();
+		const original = createSnapshot(null);
+		recordEditorHistorySnapshot(stack, original, { ignoreSelectionChanges: true });
+		const selected = { ...original, selectedClipId: "clip-a", selectedClipIds: ["clip-a"] };
+		expect(recordEditorHistorySnapshot(stack, selected, { ignoreSelectionChanges: true })).toBe(
+			"unchanged",
+		);
+		const edited = {
+			...selected,
+			sourceAudioTrackSettingsByClip: {
+				"clip-a": { mixed: { volume: 0.5, normalize: true } },
+			},
+			trimRegions: [{ id: "empty", startMs: 0, endMs: 1000 }],
+		};
+		expect(recordEditorHistorySnapshot(stack, edited, { ignoreSelectionChanges: true })).toBe(
+			"recorded",
+		);
+		expect(undoEditorHistoryStack(stack, edited)).toEqual(selected);
+		expect(redoEditorHistoryStack(stack, selected)).toEqual(edited);
+	});
 	it("initializes without adding undo history", () => {
 		const stack = createEditorHistoryStack();
 		const snapshot = createSnapshot("first");

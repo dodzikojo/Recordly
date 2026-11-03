@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "클립 {{count}}개 삭제",
+		"mixed": "혼합",
+		"selectedCount": "클립 {{count}}개 선택됨",
+		"emptyEdit": "비디오 클립이 없습니다. 실행 취소하여 편집을 복원하세요.",
+		"emptyExport": "내보내기 전에 비디오 클립을 추가하거나 삭제를 취소하세요."
+	},
 	"gap": {
 		"shortLabel": "간격",
 		"label": "간격 {{start}}–{{end}}초",

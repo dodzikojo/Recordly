@@ -1,4 +1,11 @@
 {
+	"batch": {
+		"deleteCount": "{{count}} clips verwijderen",
+		"mixed": "Gemengd",
+		"selectedCount": "{{count}} clips geselecteerd",
+		"emptyEdit": "Geen videoclips. Maak ongedaan om je montage te herstellen.",
+		"emptyExport": "Voeg een videoclip toe of maak de verwijdering ongedaan voordat je exporteert."
+	},
 	"gap": {
 		"shortLabel": "Gat",
 		"label": "Gat {{start}}–{{end}} s",
