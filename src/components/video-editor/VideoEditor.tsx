@@ -7003,6 +7003,7 @@ export default function VideoEditor() {
 						clipRegions={clipRegions}
 						onClipSplit={handleClipSplit}
 						onClipSpanChange={handleClipSpanChange}
+						onClipDelete={handleClipDelete}
 						selectedClipId={selectedClipId}
 						onSelectClip={handleSelectClip}
 						audioRegions={audioRegions}
