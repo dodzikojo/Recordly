@@ -227,6 +227,9 @@ import {
 	extendAutoFullTrackClip,
 	type FigureData,
 	getClipSourceEndMs,
+	getClipSourceStartMs,
+	splitClipRegion,
+	resizeClipRegion,
 	getEditedDurationMs,
 	getTimelineDurationMs,
 	mapTimelineTimeToEditedTime,
@@ -1201,7 +1204,7 @@ export default function VideoEditor() {
 							.filter((clip) => clip.speed !== 1)
 							.map((clip) => ({
 								id: `clip-speed-${clip.id}`,
-								startMs: clip.startMs,
+								startMs: getClipSourceStartMs(clip),
 								endMs: getClipSourceEndMs(clip),
 								speed: clip.speed as SpeedRegion["speed"],
 							}));
@@ -2050,6 +2053,23 @@ export default function VideoEditor() {
 			const normalizedEditor = normalizeProjectEditor(
 				stripPersistedDevMotionBlurSettings(project.editor ?? {}),
 			);
+			if (
+				normalizedEditor.clipRegions.some((clip) => {
+					const original = (
+						project.editor?.clipRegions as ClipRegion[] | undefined
+					)?.find((candidate) => candidate.id === clip.id);
+					return (
+						original &&
+						original.sourceStartMs === undefined &&
+						original.endMs !== clip.endMs
+					);
+				})
+			) {
+				toast.warning(
+					"Overlapping clip timing was repaired. Review the affected cut points before saving.",
+					{ id: "clip-source-timing-repair", duration: 10000 },
+				);
+			}
 
 			try {
 				videoPlaybackRef.current?.pause();
@@ -3702,7 +3722,7 @@ export default function VideoEditor() {
 			.filter((clip) => clip.speed !== 1)
 			.map((clip) => ({
 				id: `clip-speed-${clip.id}`,
-				startMs: clip.startMs,
+				startMs: getClipSourceStartMs(clip),
 				endMs: getClipSourceEndMs(clip),
 				speed: clip.speed as SpeedRegion["speed"],
 			}));
@@ -4175,20 +4195,7 @@ export default function VideoEditor() {
 				if (!target) return prev;
 				const leftId = `clip-${nextClipIdRef.current++}`;
 				const rightId = `clip-${nextClipIdRef.current++}`;
-				const left: ClipRegion = {
-					id: leftId,
-					startMs: target.startMs,
-					endMs: Math.round(splitMs),
-					speed: target.speed,
-					muted: target.muted,
-				};
-				const right: ClipRegion = {
-					id: rightId,
-					startMs: Math.round(splitMs),
-					endMs: target.endMs,
-					speed: target.speed,
-					muted: target.muted,
-				};
+				const [left, right] = splitClipRegion(target, splitMs, leftId, rightId);
 				if (selectedClipId === target.id) {
 					setSelectedClipId(leftId);
 				}
@@ -4258,7 +4265,7 @@ export default function VideoEditor() {
 
 			setClipRegions((prev) =>
 				prev.map((clip) =>
-					clip.id === id ? { ...clip, startMs: newStart, endMs: newEnd } : clip,
+					clip.id === id ? resizeClipRegion(clip, newStart, newEnd) : clip,
 				),
 			);
 		},
