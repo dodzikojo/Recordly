@@ -1,7 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRegionSpan, spansOverlap } from "./spans";
+import { normalizeExistingRegionSpan, normalizeRegionSpan, spansOverlap } from "./spans";
 
 describe("timeline core/spans", () => {
+	it("preserves an authored 1 ms visual after gap collapse during passive normalization", () => {
+		expect(
+			normalizeExistingRegionSpan({
+				startMs: 2000,
+				endMs: 2001,
+				totalMs: 10000,
+				minDurationMs: 100,
+			}),
+		).toEqual({ start: 2000, end: 2001 });
+	});
+
+	it("keeps independent narration duration beyond the video end", () => {
+		expect(
+			normalizeExistingRegionSpan(
+				{ startMs: 2000, endMs: 12000, totalMs: 5000, minDurationMs: 100 },
+				true,
+			),
+		).toEqual({ start: 2000, end: 12000 });
+	});
+
+	it("still repairs zero-duration and invalid existing regions", () => {
+		expect(
+			normalizeExistingRegionSpan({
+				startMs: 100,
+				endMs: 100,
+				totalMs: 1000,
+				minDurationMs: 100,
+			}),
+		).toEqual({ start: 100, end: 200 });
+		expect(
+			normalizeExistingRegionSpan(
+				{ startMs: Number.NaN, endMs: Number.NaN, totalMs: 1000, minDurationMs: 100 },
+				true,
+			),
+		).toEqual({ start: 0, end: 100 });
+	});
 	it("treats adjacent spans as non-overlapping", () => {
 		expect(spansOverlap({ start: 0, end: 100 }, { start: 100, end: 200 })).toBe(false);
 	});

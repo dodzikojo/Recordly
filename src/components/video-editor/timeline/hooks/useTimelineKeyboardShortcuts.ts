@@ -1,7 +1,11 @@
 import { type RefObject, useEffect } from "react";
 import { matchesShortcut } from "@/lib/shortcuts";
+import type { TimelineGap } from "../../closeGaps";
 import type { TimelineShortcutBindings } from "../core/timelineTypes";
-import { resolveDeleteSelectionTarget } from "./utils/timelineSelectionUtils";
+import {
+	isTimelineShortcutTargetBlocked,
+	resolveDeleteSelectionTarget,
+} from "./utils/timelineSelectionUtils";
 
 interface UseTimelineKeyboardShortcutsParams {
 	isMac: boolean;
@@ -13,6 +17,9 @@ interface UseTimelineKeyboardShortcutsParams {
 	selectedKeyframeId: string | null;
 	selectedZoomId: string | null;
 	selectedClipId?: string | null;
+	selectedGap?: TimelineGap | null;
+	closeSelectedGap: () => void;
+	clearSelectedGap: () => void;
 	selectedAnnotationId?: string | null;
 	selectedAudioId?: string | null;
 	selectedCaptionId?: string | null;
@@ -40,6 +47,9 @@ export function useTimelineKeyboardShortcuts({
 	selectedKeyframeId,
 	selectedZoomId,
 	selectedClipId,
+	selectedGap,
+	closeSelectedGap,
+	clearSelectedGap,
 	selectedAnnotationId,
 	selectedAudioId,
 	selectedCaptionId,
@@ -61,13 +71,15 @@ export function useTimelineKeyboardShortcuts({
 			if (e.defaultPrevented || e.isComposing || e.repeat) return;
 			const eventTarget = e.target;
 			if (
-				eventTarget instanceof HTMLInputElement ||
-				eventTarget instanceof HTMLTextAreaElement ||
-				eventTarget instanceof HTMLSelectElement ||
-				(eventTarget instanceof HTMLElement &&
-					(eventTarget.isContentEditable ||
-						eventTarget.closest('[role="dialog"], [role="alertdialog"]')))
+				isTimelineShortcutTargetBlocked(
+					eventTarget instanceof Element ? eventTarget : null,
+				) ||
+				document.querySelector('[role="dialog"], [role="alertdialog"]')
 			) {
+				return;
+			}
+			if (e.key === "Escape" && selectedGap) {
+				clearSelectedGap();
 				return;
 			}
 
@@ -105,6 +117,7 @@ export function useTimelineKeyboardShortcuts({
 
 			if (isDeleteShortcut) {
 				const target = resolveDeleteSelectionTarget({
+					selectedGap,
 					selectAllBlocksActive,
 					selectedKeyframeId,
 					selectedZoomId,
@@ -116,7 +129,9 @@ export function useTimelineKeyboardShortcuts({
 				if (target !== "none") {
 					e.preventDefault();
 				}
-				if (target === "keyframe") {
+				if (target === "gap") {
+					closeSelectedGap();
+				} else if (target === "keyframe") {
 					deleteSelectedKeyframe();
 				} else if (target === "zoom") {
 					deleteSelectedZoom();
@@ -157,6 +172,9 @@ export function useTimelineKeyboardShortcuts({
 		selectedAudioId,
 		selectedCaptionId,
 		selectedClipId,
+		selectedGap,
+		closeSelectedGap,
+		clearSelectedGap,
 		selectedKeyframeId,
 		selectedZoomId,
 	]);

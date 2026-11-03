@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import type { TimelineGap } from "../../closeGaps";
 import type { TimelineRegion } from "../core/timelineTypes";
 
 interface UseTimelineSelectionParams {
@@ -20,6 +21,7 @@ interface UseTimelineSelectionParams {
 	onCaptionDelete?: (id: string) => void;
 	onSelectZoom: (id: string | null) => void;
 	onSelectClip?: (id: string | null) => void;
+	onSelectGap?: (gap: TimelineGap | null) => void;
 	onSelectAnnotation?: (id: string | null) => void;
 	onSelectAudio?: (id: string | null) => void;
 	onSelectCaption?: (id: string | null) => void;
@@ -42,6 +44,7 @@ export function useTimelineSelection({
 	onCaptionDelete,
 	onSelectZoom,
 	onSelectClip,
+	onSelectGap,
 	onSelectAnnotation,
 	onSelectAudio,
 	onSelectCaption,
@@ -130,15 +133,24 @@ export function useTimelineSelection({
 	}, [selectedCaptionId, onCaptionDelete, onSelectCaption]);
 
 	const clearSelectedBlocks = useCallback(() => {
+		onSelectGap?.(null);
 		onSelectZoom(null);
 		onSelectClip?.(null);
 		onSelectAnnotation?.(null);
 		onSelectAudio?.(null);
 		onSelectCaption?.(null);
 		setSelectAllBlocksActive(false);
-	}, [onSelectZoom, onSelectClip, onSelectAnnotation, onSelectAudio, onSelectCaption]);
+	}, [
+		onSelectZoom,
+		onSelectClip,
+		onSelectAnnotation,
+		onSelectAudio,
+		onSelectCaption,
+		onSelectGap,
+	]);
 
 	const activateSelectAllZooms = useCallback(() => {
+		onSelectGap?.(null);
 		onSelectZoom(null);
 		onSelectClip?.(null);
 		onSelectAnnotation?.(null);
@@ -146,7 +158,23 @@ export function useTimelineSelection({
 		onSelectCaption?.(null);
 		setSelectedKeyframeId(null);
 		setSelectAllBlocksActive(true);
-	}, [onSelectZoom, onSelectClip, onSelectAnnotation, onSelectAudio, onSelectCaption]);
+	}, [
+		onSelectZoom,
+		onSelectClip,
+		onSelectAnnotation,
+		onSelectAudio,
+		onSelectCaption,
+		onSelectGap,
+	]);
+
+	const handleSelectGap = useCallback(
+		(gap: TimelineGap | null) => {
+			setSelectAllBlocksActive(false);
+			setSelectedKeyframeId(null);
+			onSelectGap?.(gap);
+		},
+		[onSelectGap],
+	);
 
 	const handleSelectZoom = useCallback(
 		(id: string | null) => {
@@ -231,6 +259,7 @@ export function useTimelineSelection({
 		clearSelectedBlocks,
 		handleSelectZoom,
 		handleSelectClip,
+		handleSelectGap,
 		handleSelectAnnotation,
 		handleSelectAudio,
 		handleSelectCaption,

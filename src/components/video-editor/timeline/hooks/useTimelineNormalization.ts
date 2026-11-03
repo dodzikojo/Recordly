@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { normalizeRegionSpan } from "../core/spans";
+import { normalizeExistingRegionSpan, normalizeRegionSpan } from "../core/spans";
 import type { AudioRegion, SpeedRegion, TrimRegion, ZoomRegion } from "../../types";
 
 interface UseTimelineNormalizationParams {
@@ -33,7 +33,7 @@ export function useTimelineNormalization({
 		}
 
 		zoomRegions.forEach((region) => {
-			const normalized = normalizeRegionSpan({
+			const normalized = normalizeExistingRegionSpan({
 				startMs: region.startMs,
 				endMs: region.endMs,
 				totalMs,
@@ -72,12 +72,15 @@ export function useTimelineNormalization({
 		});
 
 		audioRegions.forEach((region) => {
-			const normalized = normalizeRegionSpan({
-				startMs: region.startMs,
-				endMs: region.endMs,
-				totalMs,
-				minDurationMs: safeMinDurationMs,
-			});
+			const normalized = normalizeExistingRegionSpan(
+				{
+					startMs: region.startMs,
+					endMs: region.endMs,
+					totalMs,
+					minDurationMs: safeMinDurationMs,
+				},
+				true,
+			);
 
 			if (normalized.start !== region.startMs || normalized.end !== region.endMs) {
 				onAudioSpanChange?.(region.id, normalized);

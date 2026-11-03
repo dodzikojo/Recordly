@@ -1,4 +1,10 @@
 {
+	"gap": {
+		"shortLabel": "Gap",
+		"label": "Gap {{start}}–{{end}} s",
+		"close": "Close Gap",
+		"closeAll": "Close All Gaps"
+	},
 	"zoom": {
 		"cannotPlace": "Cannot place zoom here",
 		"existsOrNoSpace": "Zoom already exists at this location or not enough space available.",

@@ -15,6 +15,14 @@ It uses your installed Chrome (`channel: "chrome"`), so no browser download is n
 Chrome with `chromiumSandbox: true`; otherwise Playwright adds `--no-sandbox` and Chrome shows a
 warning bar inside the recorded window.
 
+## Smoke-test timeline editing
+
+After building the renderer/Electron main with `npx vite build --config vite.config.ts`, run
+`node tools/playwright/smoke-timeline-editing.cjs --phase gaps` from the repository root.
+The script generates a short synthetic recording and narration with FFmpeg, opens a temporary
+project in an isolated Electron profile, and exercises gap controls, Undo/Redo and save/reopen.
+It prints the temporary artifact directory and leaves the current app and user projects untouched.
+
 ## Run the calibration take
 
 1. Start Recordly with the control server on: `RECORDLY_CONTROL=1` (or `--control`).

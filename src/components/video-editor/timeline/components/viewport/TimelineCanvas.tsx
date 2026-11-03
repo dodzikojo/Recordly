@@ -15,6 +15,8 @@ import type {
 	SourceAudioTrackWithPeaks,
 } from "@/components/video-editor/audio/audioTypes";
 import { cn } from "@/lib/utils";
+import { findTimelineGaps, type TimelineGap } from "../../../closeGaps";
+import type { ClipRegion } from "../../../types";
 import {
 	CAPTION_ROW_ID,
 	CLIP_ROW_ID,
@@ -43,6 +45,7 @@ import {
 } from "../../timelineLayout";
 import TimelineAxis from "../axis/TimelineAxis";
 import ClipMarkerOverlay from "../overlays/ClipMarkerOverlay";
+import TimelineGapButton from "../overlays/TimelineGapButton";
 import PlaybackCursor from "../playhead/PlaybackCursor";
 
 const HINT_CLIP = "Press C to split clip";
@@ -51,6 +54,10 @@ const HINT_AUDIO = "Click music icon to add audio";
 
 interface TimelineCanvasProps {
 	items: TimelineRenderItem[];
+	clipRegions?: ClipRegion[];
+	selectedGap?: TimelineGap | null;
+	onSelectGap?: (gap: TimelineGap | null) => void;
+	onCloseGap?: (gap: TimelineGap) => void;
 	videoDurationMs: number;
 	currentTimeMs: number;
 	onSeek?: (time: number) => void;
@@ -360,6 +367,10 @@ function useTimelineHover({
 
 interface TimelineCanvasRowsProps {
 	items: TimelineRenderItem[];
+	gaps: TimelineGap[];
+	selectedGap?: TimelineGap | null;
+	onSelectGap?: (gap: TimelineGap | null) => void;
+	onCloseGap?: (gap: TimelineGap) => void;
 	videoDurationMs: number;
 	selectAllBlocksActive: boolean;
 	selectedZoomId: string | null;
@@ -439,6 +450,10 @@ function AudioItemWithWaveform({
 
 const TimelineCanvasRows = memo(function TimelineCanvasRows({
 	items,
+	gaps,
+	selectedGap,
+	onSelectGap,
+	onCloseGap,
 	videoDurationMs,
 	selectAllBlocksActive,
 	selectedZoomId,
@@ -539,6 +554,17 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 		<>
 			<Row id={CLIP_ROW_ID} isEmpty={clipItems.length === 0} hint={HINT_CLIP}>
 				<ClipMarkerOverlay videoDurationMs={videoDurationMs} />
+				{gaps.map((gap) => (
+					<TimelineGapButton
+						key={`${gap.startMs}-${gap.endMs}`}
+						gap={gap}
+						selected={
+							selectedGap?.startMs === gap.startMs && selectedGap.endMs === gap.endMs
+						}
+						onSelect={onSelectGap}
+						onClose={onCloseGap}
+					/>
+				))}
 				{clipItems.map((item) => (
 					<Item
 						id={item.id}
@@ -748,6 +774,10 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 
 export default function TimelineCanvas({
 	items,
+	clipRegions = [],
+	selectedGap,
+	onSelectGap,
+	onCloseGap,
 	videoDurationMs,
 	currentTimeMs,
 	onSeek,
@@ -779,6 +809,7 @@ export default function TimelineCanvas({
 	isDragging = false,
 	isLoading = false,
 }: TimelineCanvasProps) {
+	const gaps = useMemo(() => findTimelineGaps(clipRegions), [clipRegions]);
 	const { setTimelineRef, style, sidebarWidth, direction, range, valueToPixels, pixelsToValue } =
 		useTimelineContext();
 	const localTimelineRef = useRef<HTMLDivElement | null>(null);
@@ -1033,6 +1064,10 @@ export default function TimelineCanvas({
 			>
 				<TimelineCanvasRows
 					items={items}
+					gaps={isDragging ? [] : gaps}
+					selectedGap={selectedGap}
+					onSelectGap={onSelectGap}
+					onCloseGap={onCloseGap}
 					videoDurationMs={videoDurationMs}
 					selectAllBlocksActive={selectAllBlocksActive}
 					selectedZoomId={selectedZoomId}
