@@ -58,17 +58,26 @@ export function useTimelineKeyboardShortcuts({
 }: UseTimelineKeyboardShortcutsParams) {
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.defaultPrevented || e.isComposing || e.repeat) return;
 			const eventTarget = e.target;
 			if (
 				eventTarget instanceof HTMLInputElement ||
 				eventTarget instanceof HTMLTextAreaElement ||
 				eventTarget instanceof HTMLSelectElement ||
-				(eventTarget instanceof HTMLElement && eventTarget.isContentEditable)
+				(eventTarget instanceof HTMLElement &&
+					(eventTarget.isContentEditable ||
+						eventTarget.closest('[role="dialog"], [role="alertdialog"]')))
 			) {
 				return;
 			}
 
-			if (!isTimelineFocusedRef.current) {
+			const isDeleteShortcut =
+				e.key === "Delete" ||
+				e.key === "Backspace" ||
+				matchesShortcut(e, keyShortcuts.deleteSelected, isMac);
+
+			// Selection survives moving focus to the settings panel.
+			if (!isTimelineFocusedRef.current && !isDeleteShortcut) {
 				return;
 			}
 
@@ -94,11 +103,7 @@ export function useTimelineKeyboardShortcuts({
 				}
 			}
 
-			if (
-				e.key === "Delete" ||
-				e.key === "Backspace" ||
-				matchesShortcut(e, keyShortcuts.deleteSelected, isMac)
-			) {
+			if (isDeleteShortcut) {
 				const target = resolveDeleteSelectionTarget({
 					selectAllBlocksActive,
 					selectedKeyframeId,
