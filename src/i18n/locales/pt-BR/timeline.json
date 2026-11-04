@@ -1,4 +1,8 @@
 {
+	"panel": {
+		"resize": "Altura da linha do tempo",
+		"resizeHint": "Arraste para redimensionar a linha do tempo. Clique duas vezes para redefinir."
+	},
 	"batch": {
 		"deleteCount": "Excluir {{count}} clipes",
 		"mixed": "Misto",

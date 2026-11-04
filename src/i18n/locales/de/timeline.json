@@ -1,4 +1,8 @@
 {
+	"panel": {
+		"resize": "Zeitleistenhöhe",
+		"resizeHint": "Ziehen, um die Zeitleiste zu vergrößern oder zu verkleinern. Doppelklicken zum Zurücksetzen."
+	},
 	"batch": {
 		"deleteCount": "{{count}} Clips löschen",
 		"mixed": "Gemischt",

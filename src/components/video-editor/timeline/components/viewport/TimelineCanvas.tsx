@@ -38,12 +38,7 @@ import { useTimelineAudioPeaks } from "../../hooks/useTimelineAudioPeaks";
 import Item from "../../Item";
 import glassStyles from "../../ItemGlass.module.css";
 import Row from "../../Row";
-import {
-	getTimelineContentMinHeightPx,
-	getTimelineRowsMinHeightPx,
-	getTimelineViewportStretchFactor,
-	TIMELINE_AXIS_HEIGHT_PX,
-} from "../../timelineLayout";
+import { getTimelineContentMinHeightPx, getTimelineRowsMinHeightPx } from "../../timelineLayout";
 import TimelineAxis from "../axis/TimelineAxis";
 import ClipMarkerOverlay from "../overlays/ClipMarkerOverlay";
 import TimelineGapButton from "../overlays/TimelineGapButton";
@@ -988,7 +983,6 @@ export default function TimelineCanvas({
 	}, [items, showSourceAudioTrack, sourceAudioTracks.length, captionsEnabled]);
 	const timelineRowsMinHeightPx = getTimelineRowsMinHeightPx(timelineRowCount);
 	const timelineContentMinHeightPx = getTimelineContentMinHeightPx(timelineRowCount);
-	const timelineViewportStretchFactor = getTimelineViewportStretchFactor(timelineRowCount);
 	const sideProperty = direction === "rtl" ? "right" : "left";
 	const {
 		canShowGhostPlayhead,
@@ -1036,7 +1030,10 @@ export default function TimelineCanvas({
 			ref={setRefs}
 			style={{
 				...style,
-				height: `max(100%, ${timelineContentMinHeightPx}px, calc(${TIMELINE_AXIS_HEIGHT_PX}px + (100% - ${TIMELINE_AXIS_HEIGHT_PX}px) * ${timelineViewportStretchFactor}))`,
+				// Clip horizontal drawing without creating a nested scroll container;
+				// the ruler and playhead stick to the outer vertical viewport.
+				overflow: "clip",
+				height: `max(100%, ${timelineContentMinHeightPx}px)`,
 			}}
 			className="select-none bg-editor-bg relative cursor-pointer group flex flex-col"
 			onMouseDown={handleTimelineMouseDown}

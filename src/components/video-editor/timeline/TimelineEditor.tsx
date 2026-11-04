@@ -484,6 +484,7 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 			<div className="flex-1 min-h-0 flex flex-col bg-editor-bg overflow-hidden">
 				<div
 					ref={timelineContainerRef}
+					data-timeline-scroll
 					className="flex-1 min-h-0 overflow-auto bg-editor-bg relative"
 					tabIndex={0}
 					onFocus={() => {

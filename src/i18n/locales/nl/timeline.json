@@ -1,4 +1,8 @@
 {
+	"panel": {
+		"resize": "Tijdlijnhoogte",
+		"resizeHint": "Sleep om de tijdlijnhoogte aan te passen. Dubbelklik om te herstellen."
+	},
 	"batch": {
 		"deleteCount": "{{count}} clips verwijderen",
 		"mixed": "Gemengd",

@@ -90,38 +90,47 @@ export default function PlaybackCursor({
 				className="absolute top-0 bottom-0 w-[2px] bg-[#2563EB] shadow-[0_0_10px_rgba(37,99,235,0.5)] cursor-ew-resize pointer-events-auto hover:shadow-[0_0_15px_rgba(37,99,235,0.7)] transition-shadow"
 				style={{ [sideProperty]: `${offset}px` }}
 				onMouseDown={(e) => {
+					if (e.button !== 0) return;
 					e.stopPropagation();
 					setIsDragging(true);
 				}}
 			>
 				<div
-					className="absolute -top-1 left-1/2 -translate-x-1/2 hover:scale-125 transition-transform"
+					data-timeline-playhead
+					className="sticky top-0 -ml-[7px] hover:scale-125 transition-transform"
 					style={{ width: "16px", height: "16px" }}
 				>
 					<div className="w-3 h-3 mx-auto mt-[2px] bg-[#2563EB] rotate-45 rounded-sm shadow-lg border border-foreground/20" />
-				</div>
-				<div
-					className={cn(
-						"absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-black/80 text-[10px] text-white/90 font-medium tabular-nums whitespace-nowrap border border-foreground/10 shadow-lg pointer-events-none transition-opacity",
-						(isDragging || isLoading) ? "opacity-100" : "opacity-0",
-					)}
-				>
-					<div className="flex items-center">
-						{formatPlayheadTime(clampedTime).split("").map((char, i) => (
-							<span
-								key={i}
-								className={cn(
-									"leading-5 whitespace-pre",
-									isLoading && "bg-gradient-to-r from-white/40 via-white to-white/40 bg-clip-text text-transparent animate-text-shimmer"
-								)}
-								style={isLoading ? {
-									animationDelay: `${i * 0.05}s`,
-									animationDuration: "2.5s",
-								} : undefined}
-							>
-								{char}
-							</span>
-						))}
+					<div
+						className={cn(
+							"absolute top-4 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-black/80 text-[10px] text-white/90 font-medium tabular-nums whitespace-nowrap border border-foreground/10 shadow-lg pointer-events-none transition-opacity",
+							isDragging || isLoading ? "opacity-100" : "opacity-0",
+						)}
+					>
+						<div className="flex items-center">
+							{formatPlayheadTime(clampedTime)
+								.split("")
+								.map((char, i) => (
+									<span
+										key={i}
+										className={cn(
+											"leading-5 whitespace-pre",
+											isLoading &&
+												"bg-gradient-to-r from-white/40 via-white to-white/40 bg-clip-text text-transparent animate-text-shimmer",
+										)}
+										style={
+											isLoading
+												? {
+														animationDelay: `${i * 0.05}s`,
+														animationDuration: "2.5s",
+													}
+												: undefined
+										}
+									>
+										{char}
+									</span>
+								))}
+						</div>
 					</div>
 				</div>
 			</div>

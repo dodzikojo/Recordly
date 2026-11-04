@@ -1,4 +1,8 @@
 {
+	"panel": {
+		"resize": "Altezza della timeline",
+		"resizeHint": "Trascina per ridimensionare la timeline. Fai doppio clic per reimpostare."
+	},
 	"batch": {
 		"deleteCount": "Elimina {{count}} clip",
 		"mixed": "Valori misti",

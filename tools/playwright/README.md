@@ -27,6 +27,10 @@ Use `--phase selection` for modifier selection, group drag/cancel, bulk clip/aud
 Undo/Redo and explicit-empty-project persistence. This phase uses actual pointer and keyboard
 actions; the renderer state is inspected only for assertions.
 
+Use `--phase layout` for timeline height resizing with nine audio tracks. It exercises the
+divider, keyboard controls, pinned ruler/playhead seeking while scrolled, remembered height,
+window-size clamping, cancellation and double-click reset in an isolated Electron window.
+
 ## Run the calibration take
 
 1. Start Recordly with the control server on: `RECORDLY_CONTROL=1` (or `--control`).

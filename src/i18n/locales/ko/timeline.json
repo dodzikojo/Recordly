@@ -1,4 +1,8 @@
 {
+	"panel": {
+		"resize": "타임라인 높이",
+		"resizeHint": "드래그하여 타임라인 높이를 조절하세요. 두 번 클릭하면 초기화됩니다."
+	},
 	"batch": {
 		"deleteCount": "클립 {{count}}개 삭제",
 		"mixed": "혼합",

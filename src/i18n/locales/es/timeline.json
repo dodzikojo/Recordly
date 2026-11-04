@@ -1,4 +1,8 @@
 {
+	"panel": {
+		"resize": "Altura de la línea de tiempo",
+		"resizeHint": "Arrastra para cambiar la altura de la línea de tiempo. Haz doble clic para restablecerla."
+	},
 	"batch": {
 		"deleteCount": "Eliminar {{count}} clips",
 		"mixed": "Mixto",

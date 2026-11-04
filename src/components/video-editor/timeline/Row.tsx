@@ -31,6 +31,7 @@ export default function Row({
 
 	return (
 		<div
+			data-timeline-row={id}
 			className="bg-transparent relative flex-1 min-h-[26px]"
 			style={{ ...rowWrapperStyle, marginBottom: 2 }}
 		>
