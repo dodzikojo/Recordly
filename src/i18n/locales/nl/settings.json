@@ -18,6 +18,7 @@
 		"label": "Snelheid"
 	},
 	"clip": {
+		"hideCursor": "Cursor verbergen",
 		"title": "Clip",
 		"mute": "Dempen",
 		"mutedState": "Audio is gedempt",

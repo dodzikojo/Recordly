@@ -274,7 +274,12 @@ export function planBulkClipDelete(
 	return sanitizeSnapshotSelection(next);
 }
 
-export type BulkClipSettingsPatch = { speed?: number; muted?: boolean; showSourceAudio?: boolean };
+export type BulkClipSettingsPatch = {
+	speed?: number;
+	muted?: boolean;
+	showSourceAudio?: boolean;
+	hideCursor?: boolean;
+};
 export type BulkClipSettingsResult =
 	| { ok: true; state: EditorHistorySnapshot }
 	| { ok: false; reason: "invalid-speed" | "clip-overlap" | "zoom-overlap" };
@@ -294,6 +299,7 @@ export function planBulkClipSettings(
 		if (!selectedIds.has(clip.id)) return clip;
 		const next = { ...clip };
 		if (patch.muted !== undefined) next.muted = patch.muted;
+		if (patch.hideCursor !== undefined) next.hideCursor = patch.hideCursor;
 		if (patch.showSourceAudio !== undefined) next.showSourceAudio = patch.showSourceAudio;
 		if (speed !== undefined) {
 			next.speed = speed;

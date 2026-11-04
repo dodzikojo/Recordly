@@ -235,6 +235,53 @@ describe("ModernFrameRenderer Pixi lifecycle", () => {
 });
 
 describe("ModernFrameRenderer blur export path", () => {
+	it("suppresses hidden source frames and every temporal sample without leaking click tails", async () => {
+		const renderer = createRenderer() as any;
+		const samples = [{ timeMs: 1500, cx: 0.5, cy: 0.5, interactionType: "click" }];
+		renderer.config.clipRegions = [
+			{
+				id: "a",
+				startMs: 4000,
+				endMs: 4500,
+				speed: 2,
+				sourceStartMs: 1000,
+				hideCursor: true,
+			},
+		];
+		renderer.config.cursorTelemetry = samples;
+		renderer.config.webcam.enabled = false;
+		renderer.cursorFrameTimeMs = 1000;
+		renderer.app = { renderer: { render: vi.fn() }, render: vi.fn(), stage: {} };
+		renderer.cameraContainer = {};
+		renderer.videoMaskGraphics = {};
+		renderer.cursorOverlay = { update: vi.fn(), getSmoothedCursorSnapshot: () => null };
+		renderer.updateAnimationState = vi.fn();
+		renderer.updateWebcamOverlay = vi.fn(async () => undefined);
+		renderer.compositeWithShadows = vi.fn(async () => undefined);
+		const layout = {
+			stageSize: { width: 640, height: 360 },
+			maskRect: { x: 0, y: 0, width: 640, height: 360 },
+		};
+		for (const time of [999, 1500, 2000]) {
+			await renderer.renderSceneSample(
+				time * 1000,
+				time * 1000,
+				time * 1000,
+				layout,
+				false,
+				false,
+			);
+			expect(renderer.cursorOverlay.update.mock.lastCall[0]).toEqual([]);
+			expect(renderer.cursorFrameTimeMs).toBe(1000);
+		}
+		renderer.cursorFrameTimeMs = 2000;
+		await renderer.renderSceneSample(2000000, 2000000, 2000000, layout, false, false);
+		expect(renderer.cursorOverlay.update.mock.lastCall[0][0].interactionType).toBeUndefined();
+		renderer.config.clipRegions = [];
+		await renderer.renderSceneSample(2000000, 2000000, 2000000, layout, false, false);
+		expect(renderer.cursorOverlay.update.mock.lastCall[0]).toBe(samples);
+	});
+
 	beforeEach(() => {
 		Object.assign(globalThis, {
 			window: globalThis,

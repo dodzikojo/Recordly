@@ -30,6 +30,7 @@ import {
 } from "@/lib/wallpapers";
 import { type CaptionEditTarget, normalizeCaptionEditText } from "./captionEditing";
 import { buildActiveCaptionLayout } from "./captionLayout";
+import { getVisibleCursorTelemetry, isCursorHiddenAtSourceTime } from "./cursorVisibility";
 import {
 	CAPTION_FONT_WEIGHT,
 	CAPTION_LINE_HEIGHT,
@@ -43,6 +44,7 @@ import {
 	type AnnotationRegion,
 	type AutoCaptionSettings,
 	type CaptionCue,
+	type ClipRegion,
 	type CursorClickEffectStyle,
 	type CursorStyle,
 	type Padding,
@@ -368,6 +370,7 @@ interface VideoPlaybackProps {
 	onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
 	cursorTelemetry?: CursorTelemetryPoint[];
 	showCursor?: boolean;
+	clipRegions?: ClipRegion[];
 	cursorStyle?: CursorStyle;
 	cursorSize?: number;
 	cursorSmoothing?: number;
@@ -455,6 +458,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			onAnnotationSizeChange,
 			cursorTelemetry = [],
 			showCursor = false,
+			clipRegions = [],
 			cursorStyle = DEFAULT_CURSOR_STYLE,
 			cursorSize = DEFAULT_CURSOR_SIZE,
 			cursorSmoothing = DEFAULT_CURSOR_SMOOTHING,
@@ -612,6 +616,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const cursorEffectsCanvasRef = useRef<HTMLCanvasElement | null>(null);
 		const cursorTelemetryRef = useRef<CursorTelemetryPoint[]>([]);
 		const showCursorRef = useRef(showCursor);
+		const clipRegionsRef = useRef(clipRegions);
 		const cursorSizeRef = useRef(cursorSize);
 		const cursorStyleRef = useRef(cursorStyle);
 		const cursorSmoothingRef = useRef(cursorSmoothing);
@@ -1743,6 +1748,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		}, [showCursor]);
 
 		useEffect(() => {
+			clipRegionsRef.current = clipRegions;
+		}, [clipRegions]);
+
+		useEffect(() => {
 			cursorStyleRef.current = cursorStyle;
 		}, [cursorStyle]);
 
@@ -2486,8 +2495,14 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 				// Update cursor overlay + emit cursor events
 				const cursorOverlay = cursorOverlayRef.current;
+				const hiddenCursor = isCursorHiddenAtSourceTime(clipRegionsRef.current, timeMs);
+				const visibleTelemetry = getVisibleCursorTelemetry(
+					cursorTelemetryRef.current,
+					clipRegionsRef.current,
+					timeMs,
+				);
 				if (cursorOverlay) {
-					const telemetry = cursorTelemetryRef.current;
+					const telemetry = visibleTelemetry;
 					cursorOverlay.update(
 						telemetry,
 						timeMs,
@@ -2570,15 +2585,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 						const maskRect = baseMaskRef.current;
 						const animationState = animationStateRef.current;
 						const videoInfo = extensionHost.getVideoInfoSnapshot();
-						const rawCursor = getCursorPositionAtTime(
-							cursorTelemetryRef.current,
-							timeMs,
-							{
-								maskRect,
-								canvasWidth: effectsCanvas.width,
-								canvasHeight: effectsCanvas.height,
-							},
-						);
+						const rawCursor = getCursorPositionAtTime(visibleTelemetry, timeMs, {
+							maskRect,
+							canvasWidth: effectsCanvas.width,
+							canvasHeight: effectsCanvas.height,
+						});
 						const hookParams = {
 							width: effectsCanvas.width,
 							height: effectsCanvas.height,
@@ -2632,7 +2643,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 						executeExtensionRenderHooks("post-zoom", ctx2d, hookParams);
 						executeExtensionRenderHooks("post-cursor", ctx2d, hookParams);
 
-						if (isSeekingRef.current) {
+						if (isSeekingRef.current || hiddenCursor) {
 							clearCursorEffects();
 						} else {
 							executeExtensionCursorEffects(

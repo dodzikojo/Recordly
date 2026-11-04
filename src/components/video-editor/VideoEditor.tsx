@@ -1276,6 +1276,7 @@ export default function VideoEditor() {
 					previewHeight,
 					cursorTelemetry,
 					showCursor: effectiveShowCursor,
+					clipRegions,
 					cursorStyle,
 					cursorSize,
 					cursorSmoothing,
@@ -5035,6 +5036,7 @@ export default function VideoEditor() {
 					// GIF Export
 					const gifExporter = new GifExporter({
 						videoUrl: videoPath,
+						clipRegions,
 						width: settings.gifConfig.width,
 						height: settings.gifConfig.height,
 						frameRate: settings.gifConfig.frameRate,
@@ -5960,6 +5962,7 @@ export default function VideoEditor() {
 				aspectRatio={aspectRatio}
 				ref={playbackRef}
 				videoPath={optimizedPreview.videoUrl || videoPath || ""}
+				clipRegions={clipRegions}
 				sourceDimensions={optimizedPreview.sourceDimensions ?? undefined}
 				onDurationChange={setDuration}
 				onPreviewReadyChange={setIsPreviewReady}
@@ -6810,6 +6813,12 @@ export default function VideoEditor() {
 								selectedClipCount={selectedClipIds.length}
 								selectedClipSpeed={commonClipValue((clip) => clip.speed ?? 1)}
 								selectedClipMuted={commonClipValue((clip) => clip.muted ?? false)}
+								selectedClipHideCursor={commonClipValue(
+									(clip) => clip.hideCursor ?? false,
+								)}
+								onClipHideCursorChange={(hideCursor) =>
+									handleBulkClipSettings({ hideCursor })
+								}
 								selectedClipShowSourceAudio={commonClipValue(
 									(clip) => clip.showSourceAudio ?? false,
 								)}

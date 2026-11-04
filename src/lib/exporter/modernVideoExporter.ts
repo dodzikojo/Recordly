@@ -624,6 +624,7 @@ export class ModernVideoExporter {
 					previewHeight: this.config.previewHeight,
 					cursorTelemetry: this.config.cursorTelemetry,
 					showCursor: this.config.showCursor,
+					clipRegions: this.config.clipRegions,
 					cursorStyle: this.config.cursorStyle,
 					cursorSize: this.config.cursorSize,
 					cursorSmoothing: this.config.cursorSmoothing,
@@ -1536,6 +1537,13 @@ export class ModernVideoExporter {
 		const hasCursorClickEffect =
 			(this.config.cursorTelemetry?.length ?? 0) > 0 &&
 			(this.config.cursorClickEffect ?? "none") !== "none";
+		if (
+			(this.config.cursorTelemetry?.length ?? 0) > 0 &&
+			(this.config.showCursor === true || hasCursorClickEffect) &&
+			this.config.clipRegions?.some((clip) => clip.hideCursor === true)
+		) {
+			reasons.push("unsupported-clip-cursor-visibility");
+		}
 		const configuredWallpaper = this.config.wallpaper?.trim() ?? "";
 		if (isVideoWallpaperSource(configuredWallpaper)) {
 			reasons.push("unsupported-background-video");

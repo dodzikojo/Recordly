@@ -233,6 +233,7 @@ export interface ClipRegion {
 	speed: number;
 	muted?: boolean;
 	showSourceAudio?: boolean;
+	hideCursor?: boolean;
 }
 
 export function getClipSourceStartMs(clip: ClipRegion): number {

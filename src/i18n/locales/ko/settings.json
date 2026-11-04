@@ -18,6 +18,7 @@
 		"label": "속도"
 	},
 	"clip": {
+		"hideCursor": "커서 숨기기",
 		"title": "클립",
 		"mute": "음소거",
 		"mutedState": "오디오가 음소거됨",

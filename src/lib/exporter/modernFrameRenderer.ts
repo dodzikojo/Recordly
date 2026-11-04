@@ -1,4 +1,8 @@
 import { Application, BlurFilter, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
+import {
+	getVisibleCursorTelemetry,
+	isCursorHiddenAtSourceTime,
+} from "@/components/video-editor/cursorVisibility";
 import { MotionBlurFilter } from "pixi-filters/motion-blur";
 import { ZoomBlurFilter } from "pixi-filters/zoom-blur";
 import { buildActiveCaptionLayout } from "@/components/video-editor/captionLayout";
@@ -13,6 +17,7 @@ import {
 } from "@/components/video-editor/captionStyle";
 import type {
 	AnnotationRegion,
+	ClipRegion,
 	AutoCaptionSettings,
 	CaptionCue,
 	CropRegion,
@@ -72,6 +77,7 @@ import {
 	mapSmoothedCursorToCanvasNormalized,
 } from "@/lib/extensions/cursorCoordinates";
 import {
+	clearCursorEffects,
 	executeExtensionCursorEffects,
 	executeExtensionRenderHooks,
 	notifyCursorInteraction,
@@ -145,6 +151,7 @@ interface FrameRenderConfig {
 	previewHeight?: number;
 	cursorTelemetry?: CursorTelemetryPoint[];
 	showCursor?: boolean;
+	clipRegions?: ClipRegion[];
 	cursorStyle?: CursorStyle;
 	cursorSize?: number;
 	cursorSmoothing?: number;
@@ -471,6 +478,16 @@ export class FrameRenderer {
 	private layoutCache: LayoutCache | null = null;
 	private currentVideoTime = 0;
 	private cursorOverlay: PixiCursorOverlay | null = null;
+	private cursorFrameTimeMs: number | undefined;
+
+	private getFrameCursorTelemetry(timeMs: number) {
+		return getVisibleCursorTelemetry(
+			this.config.cursorTelemetry,
+			this.config.clipRegions,
+			timeMs,
+			this.cursorFrameTimeMs,
+		);
+	}
 	private lastSyncedWebcamTime: number | null = null;
 	private webcamRenderMode: "hidden" | "live" | "cached" = "hidden";
 	private webcamLayoutCache: WebcamLayoutCache | null = null;
@@ -3073,7 +3090,7 @@ export class FrameRenderer {
 
 		if (this.cursorOverlay) {
 			this.cursorOverlay.update(
-				this.config.cursorTelemetry ?? [],
+				this.getFrameCursorTelemetry(cursorTimeMs),
 				cursorTimeMs,
 				layoutCache.maskRect,
 				this.config.showCursor ?? true,
@@ -3251,6 +3268,7 @@ export class FrameRenderer {
 		}
 
 		this.currentVideoTime = timestamp / 1_000_000;
+		this.cursorFrameTimeMs = cursorTimestamp / 1000;
 
 		const resolvedVideoSource = await this.resolveDetachedVideoFrameSource(
 			videoFrame,
@@ -3326,7 +3344,7 @@ export class FrameRenderer {
 
 		if (this.cursorOverlay) {
 			this.cursorOverlay.update(
-				this.config.cursorTelemetry ?? [],
+				this.getFrameCursorTelemetry(cursorTimeMs),
 				cursorTimeMs,
 				layoutCache.maskRect,
 				this.config.showCursor ?? true,
@@ -3489,17 +3507,25 @@ export class FrameRenderer {
 		executeExtensionRenderHooks("post-zoom", this.compositeCtx, hookParams);
 		executeExtensionRenderHooks("post-cursor", this.compositeCtx, hookParams);
 		this.emitCursorInteractions(cursorTimeMs);
-		executeExtensionCursorEffects(
-			this.compositeCtx,
-			timeMs,
-			this.config.width,
-			this.config.height,
-			{
-				zoom: hookParams.zoom,
-				sceneTransform: hookParams.sceneTransform,
-				videoLayout: hookParams.videoLayout,
-			},
-		);
+		if (
+			isCursorHiddenAtSourceTime(
+				this.config.clipRegions,
+				this.cursorFrameTimeMs ?? cursorTimeMs,
+			)
+		)
+			clearCursorEffects();
+		else
+			executeExtensionCursorEffects(
+				this.compositeCtx,
+				timeMs,
+				this.config.width,
+				this.config.height,
+				{
+					zoom: hookParams.zoom,
+					sceneTransform: hookParams.sceneTransform,
+					videoLayout: hookParams.videoLayout,
+				},
+			);
 		this.compositeCtx.restore();
 
 		executeExtensionRenderHooks("post-webcam", this.compositeCtx, hookParams);
@@ -3510,7 +3536,7 @@ export class FrameRenderer {
 	private getCursorPosition(
 		timeMs: number,
 	): { cx: number; cy: number; interactionType?: string } | null {
-		const telemetry = this.config.cursorTelemetry;
+		const telemetry = this.getFrameCursorTelemetry(timeMs);
 		if (!telemetry || telemetry.length === 0) {
 			return null;
 		}
@@ -3571,7 +3597,7 @@ export class FrameRenderer {
 	}
 
 	private emitCursorInteractions(timeMs: number): void {
-		const telemetry = this.config.cursorTelemetry;
+		const telemetry = this.getFrameCursorTelemetry(timeMs);
 		if (!telemetry || telemetry.length === 0) {
 			return;
 		}

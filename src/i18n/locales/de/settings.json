@@ -18,6 +18,7 @@
         "label": "Geschwindigkeit"
     },
     "clip": {
+		"hideCursor": "Cursor ausblenden",
 		"title": "Clip",
         "mute": "Stummschalten",
         "mutedState": "Audio ist stummgeschaltet",

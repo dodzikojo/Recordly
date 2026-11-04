@@ -535,6 +535,7 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 								? { sourceEndMs: Math.round(region.sourceEndMs) }
 								: {}),
 							muted: typeof region.muted === "boolean" ? region.muted : false,
+							hideCursor: region.hideCursor === true,
 							showSourceAudio:
 								typeof region.showSourceAudio === "boolean"
 									? region.showSourceAudio

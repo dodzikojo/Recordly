@@ -18,6 +18,7 @@
 		"label": "Vitesse"
 	},
 	"clip": {
+		"hideCursor": "Masquer le curseur",
 		"title": "Clip",
 		"mute": "Sourdine",
 		"mutedState": "Le son est coupé",

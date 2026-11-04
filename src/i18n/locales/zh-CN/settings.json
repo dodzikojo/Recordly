@@ -18,6 +18,7 @@
 		"label": "速度"
 	},
 	"clip": {
+		"hideCursor": "隐藏光标",
 		"title": "片段",
 		"mute": "静音",
 		"mutedState": "音频已静音",

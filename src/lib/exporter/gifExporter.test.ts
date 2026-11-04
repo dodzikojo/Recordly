@@ -270,6 +270,9 @@ describe("GIF renderer config", () => {
 				backgroundBlur: 0,
 				cropRegion: { x: 0, y: 0, width: 1, height: 1 },
 				cursorClickEffect: "echo",
+				clipRegions: [
+					{ id: "hidden", startMs: 0, endMs: 1000, speed: 1, hideCursor: true },
+				],
 				cursorClickEffectColor: "#22C55E",
 				cursorClickEffectScale: 1.4,
 				cursorClickEffectOpacity: 0.65,
@@ -279,6 +282,7 @@ describe("GIF renderer config", () => {
 		);
 
 		expect(config).toMatchObject({
+			clipRegions: [{ id: "hidden", startMs: 0, endMs: 1000, speed: 1, hideCursor: true }],
 			cursorClickEffect: "echo",
 			cursorClickEffectColor: "#22C55E",
 			cursorClickEffectScale: 1.4,

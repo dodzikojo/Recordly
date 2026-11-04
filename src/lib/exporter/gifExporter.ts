@@ -3,6 +3,7 @@ import type {
 	AnnotationRegion,
 	AutoCaptionSettings,
 	CaptionCue,
+	ClipRegion,
 	CursorClickEffectStyle,
 	CropRegion,
 	CursorStyle,
@@ -68,6 +69,7 @@ interface GifExporterConfig {
 	autoCaptionSettings?: AutoCaptionSettings;
 	cursorTelemetry?: CursorTelemetryPoint[];
 	showCursor?: boolean;
+	clipRegions?: ClipRegion[];
 	cursorStyle?: CursorStyle;
 	cursorSize?: number;
 	cursorSmoothing?: number;
@@ -176,6 +178,7 @@ export function buildGifFrameRendererConfig(
 		previewHeight: config.previewHeight,
 		cursorTelemetry: config.cursorTelemetry,
 		showCursor: config.showCursor,
+		clipRegions: config.clipRegions,
 		cursorStyle: config.cursorStyle,
 		cursorSize: config.cursorSize,
 		cursorSmoothing: config.cursorSmoothing,
