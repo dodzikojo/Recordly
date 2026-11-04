@@ -108,9 +108,25 @@ function writeFixture() {
 							zIndex: 2,
 						},
 					],
-					audioRegions: [
-						{ id: "narration", startMs: 3000, endMs: 11000, audioPath, volume: 0.5 },
-					],
+					audioRegions:
+						phase === "layout"
+							? Array.from({ length: 9 }, (_, trackIndex) => ({
+									id: `narration-${trackIndex}`,
+									trackIndex,
+									startMs: 3000,
+									endMs: 11000,
+									audioPath,
+									volume: 0.5,
+								}))
+							: [
+									{
+										id: "narration",
+										startMs: 3000,
+										endMs: 11000,
+										audioPath,
+										volume: 0.5,
+									},
+								],
 					autoCaptions: [
 						{ id: "caption-b", startMs: 5500, endMs: 6000, text: "Source caption" },
 					],
@@ -497,6 +513,125 @@ async function testGaps(page) {
 	await persistAndReopen(page, snapshot.clips);
 }
 
+async function testLayout(page, app) {
+	const resizeWindow = (width, height) =>
+		app.evaluate(
+			({ BrowserWindow }, size) => {
+				const editor = BrowserWindow.getAllWindows().find((window) =>
+					window.webContents.getURL().includes("windowType=editor"),
+				);
+				editor.unmaximize();
+				editor.setContentSize(size.width, size.height);
+			},
+			{ width, height },
+		);
+	await resizeWindow(1280, 900);
+	await page.waitForFunction(() => window.innerHeight === 900);
+	const divider = page.getByRole("separator", { name: "Timeline height" });
+	await divider.focus();
+	await divider.press("Home");
+	const metrics = () =>
+		page.evaluate(() => {
+			const scroll = document.querySelector("[data-timeline-scroll]");
+			const lastAudio = document.querySelector('[data-timeline-row="row-audio-8"]');
+			return {
+				height: Number(
+					document.querySelector('[role="separator"]').getAttribute("aria-valuenow"),
+				),
+				scrollHeight: scroll.scrollHeight,
+				clientHeight: scroll.clientHeight,
+				scrollTop: scroll.scrollTop,
+				top: scroll.getBoundingClientRect().top,
+				bottom: scroll.getBoundingClientRect().bottom,
+				rulerTop: document.querySelector("[data-timeline-ruler]").getBoundingClientRect()
+					.top,
+				headTop: document.querySelector("[data-timeline-playhead]").getBoundingClientRect()
+					.top,
+				lastAudioBottom: lastAudio.getBoundingClientRect().bottom,
+			};
+		});
+	let snapshot = await metrics();
+	assert.equal(snapshot.height, 160);
+	assert.ok(snapshot.scrollHeight > snapshot.clientHeight + 50);
+	const scrollBox = await page.locator("[data-timeline-scroll]").boundingBox();
+	await page.mouse.move(scrollBox.x + scrollBox.width - 30, scrollBox.y + 60);
+	await page.mouse.wheel(0, 1000);
+	await page.waitForFunction(
+		() => document.querySelector("[data-timeline-scroll]").scrollTop > 20,
+	);
+	snapshot = await metrics();
+	assert.ok(Math.abs(snapshot.rulerTop - snapshot.top) < 2, JSON.stringify(snapshot));
+	assert.ok(Math.abs(snapshot.headTop - snapshot.top) < 5, JSON.stringify(snapshot));
+	const head = await page.locator("[data-timeline-playhead]").boundingBox();
+	const timeBeforeDrag = (await state(page)).videoTime;
+	await page.mouse.move(head.x + 8, head.y + 8);
+	await page.mouse.down();
+	await page.mouse.move(head.x + 138, head.y + 8, { steps: 8 });
+	await page.mouse.up();
+	await page.waitForFunction(
+		(before) => document.querySelector("video").currentTime > before + 0.1,
+		timeBeforeDrag,
+	);
+	console.log("PASS pinned ruler/playhead seek while vertically scrolled");
+
+	const before = await state(page);
+	let handle = await divider.boundingBox();
+	await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2 - 320, {
+		steps: 10,
+	});
+	await page.mouse.up();
+	snapshot = await metrics();
+	assert.equal(snapshot.height, 480);
+	assert.ok(snapshot.scrollHeight <= snapshot.clientHeight + 1, JSON.stringify(snapshot));
+	assert.ok(snapshot.lastAudioBottom <= snapshot.bottom + 1, JSON.stringify(snapshot));
+	assert.deepEqual((await state(page)).clips, before.clips);
+	assert.deepEqual((await state(page)).audio, before.audio);
+	await page.screenshot({ path: path.join(profile, "layout-expanded.png") });
+	console.log("PASS real divider drag reveals all nine audio tracks");
+
+	await divider.press("ArrowUp");
+	assert.equal((await metrics()).height, 500);
+	await page.reload();
+	await page.waitForFunction(
+		() =>
+			document.querySelector("video")?.readyState >= 2 &&
+			window.timelineSmoke.props()?.audioRegions.length === 9,
+	);
+	assert.equal((await metrics()).height, 500);
+	await resizeWindow(1280, 720);
+	await page.waitForFunction(
+		() =>
+			Number(document.querySelector('[role="separator"]').getAttribute("aria-valuenow")) <
+			500,
+	);
+	await resizeWindow(1280, 900);
+	await page.waitForFunction(
+		() =>
+			Number(document.querySelector('[role="separator"]').getAttribute("aria-valuenow")) ===
+			500,
+	);
+	console.log("PASS keyboard sizing, reload persistence and smaller-window clamping");
+
+	handle = await divider.boundingBox();
+	await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(handle.x + handle.width / 2, handle.y + 100, { steps: 6 });
+	await page.keyboard.press("Escape");
+	await page.mouse.up();
+	assert.equal((await metrics()).height, 500);
+	await divider.dblclick();
+	assert.equal((await metrics()).height, 240);
+	assert.equal(
+		await page.evaluate(() =>
+			window.electronAPI.getAppSetting("recordly.editor.timelinePanelHeight"),
+		),
+		240,
+	);
+	console.log("PASS resize cancellation and double-click reset");
+}
+
 async function persistAndReopen(page, expected, savedMatches = () => true) {
 	const deadline = Date.now() + 10000;
 	while (Date.now() < deadline) {
@@ -590,6 +725,7 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});
 		);
 		if (phase === "gaps") await testGaps(page);
 		else if (phase === "selection") await testSelection(page);
+		else if (phase === "layout") await testLayout(page, app);
 		else throw new Error(`Unknown smoke phase: ${phase}`);
 		await page.screenshot({ path: path.join(profile, `${phase}.png`) });
 		console.log(`Timeline ${phase} smoke passed. Artifacts: ${profile}`);

@@ -1,4 +1,8 @@
 {
+	"panel": {
+		"resize": "時間軸高度",
+		"resizeHint": "拖曳以調整時間軸高度，按兩下可重設。"
+	},
 	"batch": {
 		"deleteCount": "刪除 {{count}} 個片段",
 		"mixed": "混合",

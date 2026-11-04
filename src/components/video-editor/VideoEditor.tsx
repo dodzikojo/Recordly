@@ -210,6 +210,7 @@ import {
 	RECORDLY_ISSUES_URL,
 } from "./TutorialHelp";
 import TimelineEditor, { type TimelineEditorHandle } from "./timeline/TimelineEditor";
+import ResizableTimelinePanel from "./timeline/ResizableTimelinePanel";
 import {
 	normalizeCursorTelemetry,
 	shouldAutoApplyFreshRecordingZoomsForSource,
@@ -7277,13 +7278,7 @@ export default function VideoEditor() {
 						</div>
 					</div>
 				</div>
-				<div
-					className="flex-shrink-0 flex flex-col"
-					style={{
-						height: "15%",
-						minHeight: 160,
-					}}
-				>
+				<ResizableTimelinePanel>
 					<TimelineEditor
 						ref={timelineRef}
 						videoDuration={timelineDuration}
@@ -7355,7 +7350,7 @@ export default function VideoEditor() {
 							audio.onSourceAudioTracksMetaChange(tracks);
 						}}
 					/>
-				</div>
+				</ResizableTimelinePanel>
 			</div>
 
 			{showCropModal ? (
