@@ -572,45 +572,64 @@ export function registerProjectHandlers() {
       return { success: false, error: String(error), message: 'Failed to open projects folder.' }
     }
   })
-  ipcMain.handle('set-current-video-path', async (_, path: string, options?: { preserveProjectPath?: boolean; hideOverlayCursorByDefault?: boolean }) => {
-    setCurrentVideoPath(normalizeVideoSourcePath(path) ?? path)
-    approveUserPath(currentVideoPath)
-    const resolvedSession = await resolveRecordingSession(currentVideoPath)
-      ?? {
-        videoPath: currentVideoPath!,
-        webcamPath: null,
-        timeOffsetMs: 0,
-      }
+	ipcMain.handle(
+		"set-current-video-path",
+		async (
+			_,
+			filePath: string,
+			options?: { preserveProjectPath?: boolean; hideOverlayCursorByDefault?: boolean },
+		) => {
+			const nextVideoPath = normalizeVideoSourcePath(filePath) ?? filePath;
+			const currentSource = currentVideoPath ? path.resolve(currentVideoPath) : null;
+			const nextSource = path.resolve(nextVideoPath);
+			const sameSource =
+				process.platform === "win32"
+					? currentSource?.toLowerCase() === nextSource.toLowerCase()
+					: currentSource === nextSource;
+			const preserveProjectMedia = Boolean(
+				options?.preserveProjectPath && currentProjectPath && sameSource,
+			);
+			setCurrentVideoPath(nextVideoPath);
+			approveUserPath(currentVideoPath);
+			const resolvedSession = (await resolveRecordingSession(currentVideoPath)) ?? {
+				videoPath: currentVideoPath!,
+				webcamPath: null,
+				timeOffsetMs: 0,
+			};
+			const nextSession = {
+				...resolvedSession,
+				hideOverlayCursorByDefault:
+					normalizeBoolean(options?.hideOverlayCursorByDefault) ||
+					normalizeBoolean(resolvedSession.hideOverlayCursorByDefault),
+			};
 
-    const nextSession = {
-      ...resolvedSession,
-      hideOverlayCursorByDefault:
-        normalizeBoolean(options?.hideOverlayCursorByDefault) ||
-        normalizeBoolean(resolvedSession.hideOverlayCursorByDefault),
-    }
+			setCurrentRecordingSession(nextSession);
+			// Loading a project already approved its narration and other linked media.
+			// Re-registering that same source must not discard those approvals.
+			if (preserveProjectMedia) {
+				await rememberApprovedLocalReadPath(resolvedSession.videoPath);
+				await rememberApprovedLocalReadPath(resolvedSession.webcamPath);
+			} else {
+				await replaceApprovedSessionLocalReadPaths([
+					resolvedSession.videoPath,
+					resolvedSession.webcamPath,
+				]);
+			}
 
-    setCurrentRecordingSession(nextSession)
-    await replaceApprovedSessionLocalReadPaths([
-      resolvedSession.videoPath,
-      resolvedSession.webcamPath,
-    ])
-
-    if (nextSession.webcamPath) {
-      await persistRecordingSessionManifest(nextSession)
-    }
-
-    if (!options?.preserveProjectPath) {
-      setCurrentProjectPath(null)
-    }
-
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
-        window.webContents.send('recording-session-changed', nextSession);
-      }
-    }
-
-    return { success: true, webcamPath: nextSession.webcamPath ?? null }
-  })
+			if (nextSession.webcamPath) {
+				await persistRecordingSessionManifest(nextSession);
+			}
+			if (!preserveProjectMedia) {
+				setCurrentProjectPath(null);
+			}
+			for (const window of BrowserWindow.getAllWindows()) {
+				if (!window.isDestroyed()) {
+					window.webContents.send("recording-session-changed", nextSession);
+				}
+			}
+			return { success: true, webcamPath: nextSession.webcamPath ?? null };
+		},
+	);
 
   ipcMain.handle('set-current-recording-session', async (_, session: { videoPath: string; webcamPath?: string | null; timeOffsetMs?: number; hideOverlayCursorByDefault?: boolean; webcamBackgroundBlur?: unknown; initialCropRegion?: unknown }, options?: { preserveProjectPath?: boolean }) => {
     const normalizedVideoPath = normalizeVideoSourcePath(session.videoPath) ?? session.videoPath

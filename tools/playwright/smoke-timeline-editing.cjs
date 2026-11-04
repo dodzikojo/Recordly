@@ -11,7 +11,17 @@ const phase = process.argv[process.argv.indexOf("--phase") + 1] || "gaps";
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "recordly-timeline-smoke-"));
 const projectPath = path.join(profile, "timeline.recordly");
 const sourcePath = path.join(profile, "source.mp4");
-const audioPath = path.join(profile, "narration.wav");
+const audioFixtureDirectory =
+	phase === "audio"
+		? fs.mkdtempSync(
+				path.join(
+					fs.mkdirSync(path.join(root, ".tmp"), { recursive: true }) ||
+						path.join(root, ".tmp"),
+					"external-audio-",
+				),
+			)
+		: profile;
+const audioPath = path.join(audioFixtureDirectory, "narration.wav");
 const clips = [
 	{ id: "clip-a", startMs: 500, endMs: 1500, speed: 1, sourceStartMs: 1000 },
 	{ id: "clip-b", startMs: 2500, endMs: 3500, speed: 2, sourceStartMs: 5000 },
@@ -548,6 +558,132 @@ async function testGaps(page) {
 	await persistAndReopen(page, snapshot.clips);
 }
 
+async function testAudioAccess(page) {
+	const result = await page.evaluate(
+		async ({ sourcePath, audioPath }) => {
+			const audioUrl = await window.electronAPI.getLocalMediaUrl(audioPath);
+			if (!audioUrl.success)
+				throw new Error("Project audio approval was lost after editor initialization");
+			const response = await fetch(audioUrl.url);
+			if (!response.ok) throw new Error("Audio HTTP failure: " + response.status);
+			const audio = new Audio(audioUrl.url);
+			audio.muted = true;
+			await audio.play();
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			const played = audio.currentTime;
+			audio.pause();
+			const { AudioProcessor } = await import("/src/lib/exporter/audioEncoder.ts");
+			const processor = new AudioProcessor();
+			const mixed = await processor.renderEditedAudioTrack(
+				sourcePath,
+				[{ id: "tail", startMs: 3000, endMs: 20000 }],
+				[],
+				[{ id: "voice", startMs: 0, endMs: 3000, audioPath, volume: 0.5 }],
+				[],
+				{},
+				{ mixed: { volume: 0, normalize: false } },
+				[{ id: "clip", startMs: 0, endMs: 3000, speed: 1, muted: true }],
+			);
+			const source = await window.electronAPI.getLocalMediaUrl(sourcePath);
+			if (!source.success) throw new Error("Source URL unavailable");
+			const video = await (await fetch(source.url)).arrayBuffer();
+			const muxed = await window.electronAPI.muxExportedVideoAudio(video, {
+				audioMode: "edited-track",
+				editedTrackStrategy: "offline-render-fallback",
+				editedAudioData: await mixed.arrayBuffer(),
+				editedAudioMimeType: mixed.type,
+				outputDurationSec: 3,
+			});
+			if (!muxed.success) throw new Error(muxed.error || "MP4 audio mux failed");
+			return {
+				played,
+				mime: response.headers.get("content-type"),
+				mixedBytes: mixed.size,
+				outputPath: muxed.tempPath,
+			};
+		},
+		{ sourcePath, audioPath },
+	);
+	assert.ok(result.played > 0);
+	assert.equal(result.mime, "audio/wav");
+	assert.ok(result.mixedBytes > 100000);
+	const output = path.join(profile, "audio-export.mp4");
+	fs.copyFileSync(result.outputPath, output);
+	const pcm = execFileSync(
+		require("ffmpeg-static"),
+		[
+			"-hide_banner",
+			"-loglevel",
+			"error",
+			"-nostdin",
+			"-i",
+			output,
+			"-map",
+			"0:a:0",
+			"-ac",
+			"1",
+			"-ar",
+			"48000",
+			"-f",
+			"s16le",
+			"-",
+		],
+		{ windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+	);
+	let sum = 0;
+	for (let offset = 0; offset < pcm.length; offset += 2) sum += pcm.readInt16LE(offset) ** 2;
+	const rms = Math.sqrt(sum / (pcm.length / 2));
+	assert.ok(rms > 100, "Exported narration must not be silent");
+	console.log("PASS external project WAV playback, offline audio mix and real MP4 audio mux", {
+		played: result.played,
+		mixedBytes: result.mixedBytes,
+		rms,
+		output,
+	});
+
+	const recoveryIndex = process.argv.indexOf("--verify-project");
+	if (recoveryIndex >= 0) {
+		const recovery = JSON.parse(fs.readFileSync(process.argv[recoveryIndex + 1], "utf8"));
+		const copy = path.join(profile, "recovered-project.recordly");
+		fs.writeFileSync(copy, JSON.stringify(recovery));
+		const checked = await page.evaluate(
+			async ({ copy, recovery }) => {
+				const loaded = await window.electronAPI.openProjectFileAtPath(copy);
+				if (!loaded.success) throw new Error(loaded.message);
+				await window.electronAPI.setCurrentVideoPath(recovery.videoPath, {
+					preserveProjectPath: true,
+				});
+				const context = new AudioContext();
+				try {
+					return await Promise.all(
+						recovery.editor.audioRegions.map(async (region) => {
+							const url = await window.electronAPI.getLocalMediaUrl(region.audioPath);
+							if (!url.success)
+								throw new Error(
+									"Recovered audio was rejected: " + region.audioPath,
+								);
+							const response = await fetch(url.url);
+							const decoded = await context.decodeAudioData(
+								await response.arrayBuffer(),
+							);
+							if (!(decoded.duration > 0))
+								throw new Error("Empty recovered narration");
+							return { duration: decoded.duration };
+						}),
+					);
+				} finally {
+					await context.close();
+				}
+			},
+			{ copy, recovery },
+		);
+		assert.equal(checked.length, 10);
+		console.log(
+			"PASS all ten recovered narration files load and decode after project synchronization",
+		);
+	}
+}
+
 async function testCursorVisibility(page) {
 	await page.waitForFunction(
 		() =>
@@ -945,6 +1081,7 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});
 		else if (phase === "selection") await testSelection(page);
 		else if (phase === "layout") await testLayout(page, app);
 		else if (phase === "cursor") await testCursorVisibility(page);
+		else if (phase === "audio") await testAudioAccess(page);
 		else throw new Error(`Unknown smoke phase: ${phase}`);
 		await page.screenshot({ path: path.join(profile, `${phase}.png`) });
 		console.log(`Timeline ${phase} smoke passed. Artifacts: ${profile}`);

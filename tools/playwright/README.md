@@ -35,6 +35,12 @@ Use `--phase cursor` for per-clip cursor hiding. It checks actual preview pixels
 and click-effect visibility, multi-select, Undo, speed edits and save/reopen, then compares
 pixels produced by the real MP4 and GIF frame compositors. Encoder availability is separate.
 
+Use `--phase audio` after rebuilding Electron main to check imported project audio outside
+app-managed directories. It plays the external WAV, renders edited narration with the real
+audio processor, muxes a short MP4 through Electron and checks that its decoded audio is
+non-silent. Optional `--verify-project <path>` checks every audio reference in a temporary
+copy of a real project without modifying that project.
+
 ## Run the calibration take
 
 1. Start Recordly with the control server on: `RECORDLY_CONTROL=1` (or `--control`).
