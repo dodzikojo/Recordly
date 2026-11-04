@@ -31,6 +31,10 @@ Use `--phase layout` for timeline height resizing with nine audio tracks. It exe
 divider, keyboard controls, pinned ruler/playhead seeking while scrolled, remembered height,
 window-size clamping, cancellation and double-click reset in an isolated Electron window.
 
+Use `--phase cursor` for per-clip cursor hiding. It checks actual preview pixels for pointer
+and click-effect visibility, multi-select, Undo, speed edits and save/reopen, then compares
+pixels produced by the real MP4 and GIF frame compositors. Encoder availability is separate.
+
 ## Run the calibration take
 
 1. Start Recordly with the control server on: `RECORDLY_CONTROL=1` (or `--control`).

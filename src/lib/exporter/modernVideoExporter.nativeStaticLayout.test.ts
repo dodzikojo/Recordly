@@ -78,6 +78,33 @@ afterEach(() => {
 });
 
 describe("ModernVideoExporter native static-layout eligibility", () => {
+	it("uses software composition when a visible cursor is hidden for a clip", () => {
+		const exporter = createExporter({
+			showCursor: true,
+			cursorTelemetry: [{ timeMs: 0, cx: 0.5, cy: 0.5 }],
+			clipRegions: [{ id: "a", startMs: 0, endMs: 60000, speed: 1, hideCursor: true }],
+		});
+		expect(exporter.getNativeStaticLayoutSkipReason({ audioMode: "none" }, videoInfo, 60)).toBe(
+			"unsupported-clip-cursor-visibility",
+		);
+	});
+
+	it.each([
+		{ showCursor: false, cursorTelemetry: [{ timeMs: 0, cx: 0.5, cy: 0.5 }], hideCursor: true },
+		{ showCursor: true, cursorTelemetry: [], hideCursor: true },
+		{ showCursor: true, cursorTelemetry: [{ timeMs: 0, cx: 0.5, cy: 0.5 }], hideCursor: false },
+	])("keeps native export eligible when cursor hiding has no visual effect: %o", (settings) => {
+		const exporter = createExporter({
+			...settings,
+			clipRegions: [
+				{ id: "a", startMs: 0, endMs: 60000, speed: 1, hideCursor: settings.hideCursor },
+			],
+		});
+		expect(
+			exporter.getNativeStaticLayoutSkipReason({ audioMode: "none" }, videoInfo, 60),
+		).toBeNull();
+	});
+
 	it("allows native static-layout eligibility for VP9/WebM sources so main can proxy them", () => {
 		const exporter = createExporter();
 

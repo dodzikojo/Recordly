@@ -18,6 +18,7 @@
 		"label": "Speed"
 	},
 	"clip": {
+		"hideCursor": "Hide cursor",
 		"title": "Clip",
 		"mute": "Mute",
 		"mutedState": "Audio is muted",

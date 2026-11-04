@@ -713,6 +713,8 @@ interface SettingsPanelProps {
 	selectedClipCount?: number;
 	selectedClipSpeed?: number | null;
 	selectedClipMuted?: boolean | null;
+	selectedClipHideCursor?: boolean | null;
+	onClipHideCursorChange?: (hidden: boolean) => void;
 	selectedClipShowSourceAudio?: boolean | null;
 	hasClipSourceAudio?: boolean;
 	onClipSpeedChange?: (speed: number) => void;
@@ -1178,6 +1180,8 @@ export function SettingsPanel({
 	selectedClipCount = 0,
 	selectedClipSpeed,
 	selectedClipMuted,
+	selectedClipHideCursor,
+	onClipHideCursorChange,
 	selectedClipShowSourceAudio = false,
 	hasClipSourceAudio = false,
 	onClipSpeedChange,
@@ -3533,6 +3537,26 @@ export function SettingsPanel({
 							</Button>
 						);
 					})}
+				</div>
+
+				<div className="mt-2 flex items-center justify-between rounded-lg bg-foreground/[0.03] px-2.5 py-1.5">
+					<span className="text-[10px] text-muted-foreground">
+						{tSettings("clip.hideCursor", "Hide cursor")}
+						{selectedClipHideCursor == null && selectedClipCount > 1 && (
+							<span className="ml-2">{t("timeline.batch.mixed", "Mixed")}</span>
+						)}
+					</span>
+					<Switch
+						aria-label={tSettings("clip.hideCursor", "Hide cursor")}
+						aria-checked={
+							selectedClipHideCursor == null && selectedClipCount > 1
+								? "mixed"
+								: (selectedClipHideCursor ?? false)
+						}
+						checked={selectedClipHideCursor ?? false}
+						onCheckedChange={onClipHideCursorChange}
+						className="data-[state=checked]:bg-[#06b6d4] scale-75"
+					/>
 				</div>
 
 				<div className="mt-2 flex flex-col gap-2 border-t border-foreground/5 pt-3">

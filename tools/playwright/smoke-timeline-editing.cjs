@@ -62,6 +62,20 @@ function generateMedia() {
 }
 
 function writeFixture() {
+	if (phase === "cursor") {
+		fs.writeFileSync(
+			sourcePath + ".cursor.json",
+			JSON.stringify({
+				version: 1,
+				samples: Array.from({ length: 1001 }, (_, index) => ({
+					timeMs: index * 20,
+					cx: 0.5,
+					cy: 0.5,
+					interactionType: index % 50 === 0 ? "click" : "move",
+				})),
+			}),
+		);
+	}
 	fs.writeFileSync(
 		projectPath,
 		JSON.stringify(
@@ -69,6 +83,15 @@ function writeFixture() {
 				version: 1,
 				videoPath: sourcePath,
 				editor: {
+					...(phase === "cursor"
+						? {
+								showCursor: true,
+								cursorStyle: "dot",
+								cursorClickEffect: "echo",
+								cursorClickEffectColor: "#ff00ff",
+								cursorClickBounceDuration: 120,
+							}
+						: {}),
 					clipRegions:
 						phase === "selection"
 							? clips.map((clip) =>
@@ -151,6 +174,18 @@ async function installInspection(page) {
 					if (!node) return null;
 					if (node.memoizedProps?.onClipSplit && node.memoizedProps?.onSeek)
 						return node.memoizedProps;
+					return visit(node.child) || visit(node.sibling);
+				};
+				return visit(fiber.stateNode?.current || fiber.current || fiber);
+			},
+			playback() {
+				const rootNode = document.getElementById("root");
+				const key = Object.keys(rootNode).find((key) => key.startsWith("__reactContainer"));
+				const fiber = rootNode[key];
+				const visit = (node) => {
+					if (!node) return null;
+					if (node.ref?.current?.refreshFrame && node.ref.current.app)
+						return node.ref.current;
 					return visit(node.child) || visit(node.sibling);
 				};
 				return visit(fiber.stateNode?.current || fiber.current || fiber);
@@ -513,6 +548,189 @@ async function testGaps(page) {
 	await persistAndReopen(page, snapshot.clips);
 }
 
+async function testCursorVisibility(page) {
+	await page.waitForFunction(
+		() =>
+			window.timelineSmoke.playback()?.app &&
+			window.timelineSmoke.props()?.cursorTelemetry.length > 0,
+	);
+	const pixelHash = () =>
+		page.evaluate(() => {
+			const app = window.timelineSmoke.playback().app;
+			const result = app.renderer.extract.pixels({ target: app.stage });
+			let hash = 2166136261;
+			for (const byte of result.pixels) hash = Math.imul(hash ^ byte, 16777619);
+			return hash >>> 0;
+		});
+	await clipLocator(page, "clip-a").click();
+	const toggle = page.getByRole("switch", { name: "Hide cursor", exact: true });
+	await toggle.waitFor();
+	const visibleHash = await pixelHash();
+	await toggle.click();
+	await page.waitForFunction(
+		() => window.timelineSmoke.props().clipRegions[0].hideCursor === true,
+	);
+	await page.waitForFunction((before) => {
+		const app = window.timelineSmoke.playback().app;
+		let hash = 2166136261;
+		for (const byte of app.renderer.extract.pixels({ target: app.stage }).pixels)
+			hash = Math.imul(hash ^ byte, 16777619);
+		return hash >>> 0 !== before;
+	}, visibleHash);
+	const hiddenHash = await pixelHash();
+	await undo(page);
+	await page.waitForFunction(() => !window.timelineSmoke.props().clipRegions[0].hideCursor);
+	await page.waitForTimeout(100);
+	assert.notEqual(await pixelHash(), hiddenHash);
+	console.log("PASS paused cursor pixels hide and restore with one Undo");
+
+	await page.getByTitle("Cursor", { exact: true }).click();
+	await page.getByRole("switch", { name: "Show Cursor", exact: true }).click();
+	await page.waitForFunction(
+		() => !window.timelineSmoke.playback() || document.querySelector("video").paused,
+	);
+	// Seek slightly after the first click so its ring is visible with the pointer disabled.
+	const clip = await clipLocator(page, "clip-a").boundingBox();
+	const ruler = await page.locator("[data-timeline-ruler]").boundingBox();
+	await page.mouse.click(clip.x + clip.width * 0.25, ruler.y + 18);
+	await page.waitForFunction(
+		() => Math.abs(document.querySelector("video").currentTime - 1.25) < 0.04,
+	);
+	await clipLocator(page, "clip-a").click();
+	await page.waitForTimeout(150);
+	const ringHash = await pixelHash();
+	await toggle.click();
+	await page.waitForFunction(
+		() => window.timelineSmoke.props().clipRegions[0].hideCursor === true,
+	);
+	await page.waitForTimeout(150);
+	assert.notEqual(await pixelHash(), ringHash);
+	console.log("PASS Hide cursor suppresses click effects even when global Show Cursor is off");
+
+	await selectPair(page, "clip-a", "clip-b");
+	assert.ok((await page.getByText("Mixed", { exact: true }).count()) > 0);
+	await toggle.click();
+	await page.waitForFunction(() =>
+		window.timelineSmoke
+			.props()
+			.clipRegions.slice(0, 2)
+			.every((clip) => clip.hideCursor),
+	);
+	await undo(page);
+	await page.waitForFunction(() => !window.timelineSmoke.props().clipRegions[1].hideCursor);
+	assert.equal((await state(page)).clips[0].hideCursor, true);
+	await toggle.click();
+	await page.waitForFunction(() =>
+		window.timelineSmoke
+			.props()
+			.clipRegions.slice(0, 2)
+			.every((clip) => clip.hideCursor),
+	);
+	await page.getByRole("button", { name: "5×", exact: true }).click();
+	await page.waitForFunction(() => window.timelineSmoke.props().clipRegions[1].speed === 5);
+	assert.ok((await state(page)).clips.slice(0, 2).every((clip) => clip.hideCursor));
+	await undo(page);
+	await page.waitForFunction(() => window.timelineSmoke.props().clipRegions[1].speed === 2);
+	const saved = (await state(page)).clips;
+	await page.screenshot({ path: path.join(profile, "cursor-controls.png") });
+	await persistAndReopen(page, saved);
+	assert.ok((await state(page)).clips.slice(0, 2).every((clip) => clip.hideCursor));
+	console.log("PASS multi-select, mixed values, speed edit, Undo and save/reopen");
+	const compositorResults = await page.evaluate(async () => {
+		const { FrameRenderer } = await import("/src/lib/exporter/frameRenderer.ts");
+		const { FrameRenderer: ModernFrameRenderer } = await import(
+			"/src/lib/exporter/modernFrameRenderer.ts"
+		);
+		const results = [];
+		for (const Renderer of [FrameRenderer, ModernFrameRenderer]) {
+			const config = {
+				width: 640,
+				height: 360,
+				frameRate: 30,
+				preferredRenderBackend: "webgl",
+				wallpaper: "#111111",
+				zoomRegions: [],
+				showShadow: false,
+				shadowIntensity: 0,
+				padding: 0,
+				backgroundBlur: 0,
+				borderRadius: 0,
+				cropRegion: { x: 0, y: 0, width: 1, height: 1 },
+				videoWidth: 640,
+				videoHeight: 360,
+				showCursor: true,
+				cursorStyle: "dot",
+				cursorClickEffect: "echo",
+				cursorClickBounceDuration: 120,
+				cursorClickEffectColor: "#ff00ff",
+				cursorTelemetry: [
+					{ timeMs: 1000, cx: 0.5, cy: 0.5, interactionType: "click" },
+					{ timeMs: 2000, cx: 0.5, cy: 0.5 },
+				],
+				clipRegions: [],
+			};
+			const renderer = new Renderer(config);
+			await renderer.initialize();
+			try {
+				const source = document.createElement("canvas");
+				source.width = 640;
+				source.height = 360;
+				const context = source.getContext("2d");
+				context.fillStyle = "#cc3333";
+				context.fillRect(0, 0, 640, 360);
+				const hash = async () => {
+					await renderer.renderFrame(source, 1250000, 1250000);
+					const pixels = renderer.capturePixelsForNativeExport
+						? renderer.capturePixelsForNativeExport()
+						: renderer.getCanvas().getContext("2d").getImageData(0, 0, 640, 360).data;
+					let value = 2166136261;
+					for (const byte of pixels) value = Math.imul(value ^ byte, 16777619);
+					return value >>> 0;
+				};
+				const visible = await hash();
+				renderer.config.clipRegions = [
+					{
+						id: "a",
+						startMs: 4000,
+						endMs: 4500,
+						speed: 2,
+						sourceStartMs: 1000,
+						hideCursor: true,
+					},
+				];
+				const hidden = await hash();
+				renderer.config.showCursor = false;
+				renderer.config.clipRegions = [];
+				const ring = await hash();
+				renderer.config.clipRegions = [
+					{
+						id: "a",
+						startMs: 4000,
+						endMs: 4500,
+						speed: 2,
+						sourceStartMs: 1000,
+						hideCursor: true,
+					},
+				];
+				const hiddenRing = await hash();
+				results.push({ name: Renderer.name, visible, hidden, ring, hiddenRing });
+			} finally {
+				renderer.destroy();
+			}
+		}
+		return results;
+	});
+	for (const result of compositorResults) {
+		assert.notEqual(result.visible, result.hidden, JSON.stringify(result));
+		assert.notEqual(result.ring, result.hiddenRing, JSON.stringify(result));
+		assert.equal(result.hidden, result.hiddenRing, JSON.stringify(result));
+	}
+	console.log(
+		"PASS real GIF/MP4 compositor pixels hide pointer and click effects",
+		compositorResults,
+	);
+}
+
 async function testLayout(page, app) {
 	const resizeWindow = (width, height) =>
 		app.evaluate(
@@ -726,6 +944,7 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});
 		if (phase === "gaps") await testGaps(page);
 		else if (phase === "selection") await testSelection(page);
 		else if (phase === "layout") await testLayout(page, app);
+		else if (phase === "cursor") await testCursorVisibility(page);
 		else throw new Error(`Unknown smoke phase: ${phase}`);
 		await page.screenshot({ path: path.join(profile, `${phase}.png`) });
 		console.log(`Timeline ${phase} smoke passed. Artifacts: ${profile}`);
