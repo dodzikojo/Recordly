@@ -17,7 +17,8 @@ import type {
 	ZoomRegion,
 	ZoomTransitionEasing,
 } from "@/components/video-editor/types";
-import { ZOOM_DEPTH_SCALES } from "@/components/video-editor/types";
+import { getEditedDurationMs, ZOOM_DEPTH_SCALES } from "@/components/video-editor/types";
+import { clipTimelineMatchesLegacy } from "./clipTimeline";
 import { DEFAULT_FOCUS } from "@/components/video-editor/videoPlayback/constants";
 import {
 	computeCursorFollowFocus,
@@ -539,6 +540,7 @@ export class ModernVideoExporter {
 				const effectiveDuration = this.streamingDecoder.getEffectiveDuration(
 					this.config.trimRegions,
 					this.config.speedRegions,
+					this.config.clipRegions,
 				);
 				this.effectiveDurationSec = effectiveDuration;
 				const totalFrames = Math.ceil(effectiveDuration * this.config.frameRate);
@@ -688,6 +690,7 @@ export class ModernVideoExporter {
 						_exportTimestampUs,
 						sourceTimestampMs,
 						cursorTimestampMs,
+						clip,
 					) => {
 						const callbackStartedAt = this.getNowMs();
 						if (this.cancelled) {
@@ -704,6 +707,7 @@ export class ModernVideoExporter {
 							cursorTimestampUs,
 							frameDuration,
 							timestamp,
+							clip,
 						);
 						this.renderFrameTimeMs += this.getNowMs() - renderStartedAt;
 
@@ -729,6 +733,7 @@ export class ModernVideoExporter {
 							data: { frameIndex, totalFrames },
 						});
 					},
+					this.config.clipRegions,
 				);
 				this.decodeLoopTimeMs = this.getNowMs() - decodeLoopStartedAt;
 
@@ -1147,6 +1152,8 @@ export class ModernVideoExporter {
 	}
 
 	private getNativeStaticLayoutEffectiveDuration(videoInfo: DecodedVideoInfo): number {
+		if (this.config.clipRegions?.length)
+			return getEditedDurationMs(this.config.clipRegions, 0) / 1000;
 		const sourceDurationSec = getEffectiveVideoStreamDurationSeconds({
 			duration: videoInfo.duration,
 			streamDuration: videoInfo.streamDuration,
@@ -1283,6 +1290,12 @@ export class ModernVideoExporter {
 	}
 
 	private buildNativeAudioPlan(videoInfo: DecodedVideoInfo): NativeAudioPlan {
+		const requiresClipRemapping = !clipTimelineMatchesLegacy(
+			this.config.clipRegions,
+			getEffectiveVideoStreamDurationSeconds(videoInfo) * 1000,
+			this.config.trimRegions,
+			this.config.speedRegions,
+		);
 		const speedRegions = this.config.speedRegions ?? [];
 		const audioRegions = this.config.audioRegions ?? [];
 		const sourceAudioFallbackPaths = this.getNativeAudioFallbackPaths(videoInfo);
@@ -1311,6 +1324,7 @@ export class ModernVideoExporter {
 		}
 
 		if (
+			requiresClipRemapping ||
 			speedRegions.length > 0 ||
 			audioRegions.length > 0 ||
 			sourceAudioFallbackPaths.length > 1 ||
@@ -1337,6 +1351,7 @@ export class ModernVideoExporter {
 				Number.isFinite(primaryAudioSourceSampleRate) &&
 				primaryAudioSourceSampleRate > 0;
 			const requiresRenderedEditedTrack =
+				requiresClipRemapping ||
 				hasNonDefaultSourceTrackSettings(this.config.sourceAudioTrackSettings) ||
 				(this.config.clipRegions ?? []).some((clip) => Boolean(clip.muted));
 			const strategy =
@@ -1537,6 +1552,15 @@ export class ModernVideoExporter {
 		const hasCursorClickEffect =
 			(this.config.cursorTelemetry?.length ?? 0) > 0 &&
 			(this.config.cursorClickEffect ?? "none") !== "none";
+		if (
+			!clipTimelineMatchesLegacy(
+				this.config.clipRegions,
+				getEffectiveVideoStreamDurationSeconds(videoInfo) * 1000,
+				this.config.trimRegions,
+				this.config.speedRegions,
+			)
+		)
+			reasons.push("unsupported-clip-sequence");
 		if (
 			(this.config.cursorTelemetry?.length ?? 0) > 0 &&
 			(this.config.showCursor === true || hasCursorClickEffect) &&
