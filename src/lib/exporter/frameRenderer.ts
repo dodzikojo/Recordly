@@ -1,4 +1,5 @@
 import { getClipCursorRegions } from "./clipTimeline";
+import { VideoFrameStager } from "./videoFrameStager";
 import { Application, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 import {
 	getVisibleCursorTelemetry,
@@ -257,6 +258,7 @@ export class FrameRenderer {
 	private cursorContainer: Container | null = null;
 	private videoSprite: Sprite | null = null;
 	private videoTextureSource: VideoTextureSource | null = null;
+	private readonly videoFrameStager = new VideoFrameStager();
 	private backgroundSprite: HTMLCanvasElement | null = null;
 	private maskGraphics: Graphics | null = null;
 	private zoomBlurFilter: ZoomBlurFilter | null = null;
@@ -1492,9 +1494,15 @@ export class FrameRenderer {
 		this.cursorFrameTimeMs = cursorTimestamp / 1000;
 		this.activeCursorClips = getClipCursorRegions(this.config.clipRegions, clip);
 
-		// Create or update video sprite from VideoFrame
+		// A decoder frame is borrowed only for this callback. Upload an owned pixel copy.
+		const videoSource = this.videoFrameStager.stage(
+			videoFrame,
+			"scene",
+			this.config.videoWidth,
+			this.config.videoHeight,
+		);
 		if (!this.videoSprite) {
-			const texture = Texture.from(videoFrame as unknown as PixiTextureInput);
+			const texture = Texture.from(videoSource as unknown as PixiTextureInput);
 			this.videoSprite = new Sprite(texture);
 			this.videoTextureSource = texture.source as unknown as VideoTextureSource;
 			this.videoContainer.addChild(this.videoSprite);
@@ -1507,7 +1515,7 @@ export class FrameRenderer {
 		} else {
 			this.videoTextureSource ??= this.videoSprite.texture
 				.source as unknown as VideoTextureSource;
-			this.videoTextureSource.resource = videoFrame;
+			this.videoTextureSource.resource = videoSource;
 			this.videoTextureSource.update();
 		}
 
@@ -2706,6 +2714,7 @@ export class FrameRenderer {
 			destroyPixiApplication(this.app, "legacy export renderer");
 			this.app = null;
 		}
+		this.videoFrameStager.dispose();
 		this.zoomBlurFilter?.destroy();
 		this.motionBlurFilter?.destroy();
 		this.cameraContainer = null;
