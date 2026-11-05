@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Rectangle, Sprite, Texture, VideoSource } from "pixi.js";
+import { Application, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 import { MotionBlurFilter } from "pixi-filters/motion-blur";
 import { ZoomBlurFilter } from "pixi-filters/zoom-blur";
 import type React from "react";
@@ -177,6 +177,7 @@ import {
 import { clampFocusToStage as clampFocusToStageUtil } from "./videoPlayback/focusUtils";
 import { layoutVideoContent as layoutVideoContentUtil } from "./videoPlayback/layoutUtils";
 import { updateOverlayIndicator } from "./videoPlayback/overlayUtils";
+import { PreviewVideoSource } from "./videoPlayback/previewVideoSource";
 import { createVideoEventHandlers } from "./videoPlayback/videoEventHandlers";
 import { getWebcamMediaTargetTimeSeconds, shouldSeekWebcamMedia } from "./videoPlayback/webcamSync";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
@@ -487,13 +488,16 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		ref,
 	) => {
 		const videoRef = useRef<HTMLVideoElement | null>(null);
-		const attachVideo = useCallback(
-			(video: HTMLVideoElement | null) => {
-				videoRef.current = video;
-				onVideoElementChange?.(video);
-			},
-			[onVideoElementChange],
-		);
+		const previewVideoSourceRef = useRef(new PreviewVideoSource());
+		const onVideoElementChangeRef = useRef(onVideoElementChange);
+		onVideoElementChangeRef.current = onVideoElementChange;
+		const attachVideo = useCallback((video: HTMLVideoElement | null) => {
+			// Destroying a VideoSource clears the media URL. Only do it when the
+			// element detaches, never during preview effect cleanup or layout changes.
+			previewVideoSourceRef.current.setVideo(video);
+			videoRef.current = video;
+			onVideoElementChangeRef.current?.(video);
+		}, []);
 		const previewFrameRef = useRef<HTMLDivElement | null>(null);
 		const containerRef = useRef<HTMLDivElement | null>(null);
 		const appRef = useRef<Application | null>(null);
@@ -2226,13 +2230,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				return;
 			if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
-			const source = VideoSource.from(video);
-			if ("autoPlay" in source) {
-				(source as { autoPlay?: boolean }).autoPlay = false;
-			}
-			if ("autoUpdate" in source) {
-				(source as { autoUpdate?: boolean }).autoUpdate = true;
-			}
+			const source = previewVideoSourceRef.current.getSource();
 			const videoTexture = Texture.from(source);
 
 			const videoSprite = new Sprite(videoTexture);
@@ -2249,7 +2247,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 			animationStateRef.current = createPlaybackAnimationState();
 
-			layoutVideoContent();
+			layoutVideoContentRef.current?.();
 			video.pause();
 
 			const { handlePlay, handlePause, handleSeeked, handleSeeking, dispose } =
@@ -2294,11 +2292,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				videoContainer.mask = null;
 				maskGraphicsRef.current = null;
 				videoEffectsContainer.filters = null;
-				videoTexture.destroy(false);
+				if (!videoTexture.destroyed) videoTexture.destroy(false);
+				previewVideoSourceRef.current.suspend();
 
 				videoSpriteRef.current = null;
 			};
-		}, [pixiReady, videoReady, onTimeUpdate, updateOverlayForRegion]);
+		}, [pixiReady, videoReady, onPlayStateChange, onTimeUpdate]);
 
 		useEffect(() => {
 			if (!pixiReady || !videoReady) return;

@@ -108,6 +108,15 @@ when none is live, and after `timeoutMs` (default 5 s, also used by `status()`/`
 "Recordly's control server isn't responding …" when the server doesn't answer. `start`, `stop`,
 `pause`, `resume` and `cancel` have no timeout (`stop` waits for the editor to save).
 
+## Preview source cleanup smoke
+
+After building the Electron main entry, run `node tools/playwright/smoke-preview-memory.cjs`.
+It opens the actual editor in an isolated profile, generates 4K/1080p fixtures, exercises
+120 radius changes, 20 padding changes and ten project switches, and checks source ownership,
+bounded listeners, playback and paused-seek pixels. It writes screenshots and a report to the
+printed temporary directory. `--baseline <git-ref>` runs the same checks against that ref's
+`VideoPlayback.tsx` without changing the checkout; the pre-fix revision fails source cleanup.
+
 ## Troubleshooting offsets
 
 The helper maps page coordinates to screen coordinates from the window position and size at each
