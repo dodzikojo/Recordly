@@ -219,7 +219,7 @@ export class VideoExporter {
 			this.renderer = new FrameRenderer({
 				width: this.config.width,
 				height: this.config.height,
-				preferredRenderBackend: undefined,
+				preferredRenderBackend: this.config.preferredRenderBackend,
 				wallpaper: this.config.wallpaper,
 				zoomRegions: this.config.zoomRegions,
 				showShadow: this.config.showShadow,
@@ -428,6 +428,7 @@ export class VideoExporter {
 								this.config.sourceAudioFallbackPaths,
 								this.config.sourceAudioFallbackStartDelayMsByPath,
 								this.config.sourceAudioTrackSettings,
+								this.config.clipRegions,
 							),
 							"audio processing",
 							"audio",

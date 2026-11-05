@@ -4,6 +4,7 @@
  * node tools/playwright/smoke-export-timeline.cjs
  * Add --verify-project <path> to export a temporary snapshot at 640x360/24fps.
  * Add --repeat 3 to exercise asynchronous decoder cleanup across repeated jobs.
+ * Add --4k for 4K frame uploads, or --only legacy/modern/gif for one pipeline.
  */
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
@@ -17,6 +18,15 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), "recordly-export-timeline-
 const sourcePath = path.join(profile, "source.mp4");
 const audioPath = path.join(profile, "ending-tone.wav");
 const projectPath = path.join(profile, "overlapping-clips.recordly");
+const dimensions = process.argv.includes("--4k")
+	? { width: 3840, height: 2160 }
+	: { width: 640, height: 360 };
+const onlyIndex = process.argv.indexOf("--only");
+const only = onlyIndex < 0 ? null : process.argv[onlyIndex + 1];
+assert.ok(
+	only === null || ["legacy", "modern", "gif"].includes(only),
+	"--only must be legacy, modern or gif",
+);
 const repeatIndex = process.argv.indexOf("--repeat");
 const repeat = repeatIndex < 0 ? 1 : Number(process.argv[repeatIndex + 1]);
 assert.ok(Number.isInteger(repeat) && repeat >= 1 && repeat <= 5, "--repeat must be 1–5");
@@ -51,7 +61,7 @@ function generateMedia() {
 		"-f",
 		"lavfi",
 		"-i",
-		"testsrc2=size=640x360:rate=30",
+		`testsrc2=size=${dimensions.width}x${dimensions.height}:rate=30`,
 		"-f",
 		"lavfi",
 		"-i",
@@ -59,7 +69,7 @@ function generateMedia() {
 		"-t",
 		"20",
 		"-vf",
-		"drawbox=x=0:y=0:w=iw:h=ih:color=0x00dd33:t=fill:enable='gte(t,18)'",
+		"drawbox=x=iw*0.1:y=ih*0.1:w=iw*0.1:h=ih*0.1:color=0xdd2255:t=fill,drawbox=x=0:y=0:w=iw:h=ih:color=0x00dd33:t=fill:enable='gte(t,18)'",
 		"-c:v",
 		"libx264",
 		"-preset",
@@ -182,6 +192,29 @@ function verifyExport(file, frameCount, audio) {
 	for (let index = 0; index < first.length; index++)
 		error += Math.abs(first[index] - repeated[index]);
 	assert.ok(error / first.length < 4, "Reused source footage must appear twice, in clip order");
+	// A large solid marker survives GIF quantization and resampling of the 4K test pattern.
+	// Repeated background-only frames must not pass just because their hashes agree.
+	const marker = runFfmpeg([
+		"-ss",
+		"0.6",
+		"-i",
+		file,
+		"-frames:v",
+		"1",
+		"-vf",
+		"crop=iw/10:ih/10:iw/10:ih/10,scale=1:1",
+		"-pix_fmt",
+		"rgb24",
+		"-f",
+		"rawvideo",
+		"-",
+	]);
+	assert.ok(
+		Math.abs(marker[0] - 221) < 25 &&
+			Math.abs(marker[1] - 34) < 25 &&
+			Math.abs(marker[2] - 85) < 25,
+		`Export must contain the decoded screen marker, not only the background: ${[...marker]}`,
+	);
 	if (audio) {
 		const sound = metadata.streams.find((stream) => stream.codec_type === "audio");
 		assert.ok(sound && Number(sound.duration) >= 5.95, JSON.stringify(metadata));
@@ -323,7 +356,17 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 		);
 		if (browser) await page.goto(`${url}/export-timeline-smoke.html`);
 		const exports = await page.evaluate(
-			async ({ sourcePath, audioPath, clips, trims, speeds, narration, repeat }) => {
+			async ({
+				sourcePath,
+				audioPath,
+				clips,
+				trims,
+				speeds,
+				narration,
+				repeat,
+				dimensions,
+				only,
+			}) => {
 				const base64 = (buffer) => {
 					const bytes = new Uint8Array(buffer);
 					let text = "";
@@ -354,10 +397,10 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 				const { GifExporter } = await import("/src/lib/exporter/gifExporter.ts");
 				const config = {
 					videoUrl: sourcePath,
-					width: 640,
-					height: 360,
+					width: dimensions.width,
+					height: dimensions.height,
 					frameRate: 30,
-					bitrate: 2_000_000,
+					bitrate: dimensions.width >= 3840 ? 40_000_000 : 2_000_000,
 					backendPreference: "webcodecs",
 					preferredRenderBackend: "webgl",
 					wallpaper: "#111111",
@@ -379,6 +422,11 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 				const cases = [
 					["modern.mp4", ModernVideoExporter, {}],
 					[
+						"modern-webgpu.mp4",
+						ModernVideoExporter,
+						{ preferredRenderBackend: "webgpu" },
+					],
+					[
 						"source-audio.mp4",
 						ModernVideoExporter,
 						{
@@ -388,14 +436,24 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 						},
 					],
 					["legacy.mp4", VideoExporter, {}],
-					["timeline.gif", GifExporter, { frameRate: 10, loop: false }],
+					[
+						"timeline.gif",
+						GifExporter,
+						{ width: 640, height: 360, frameRate: 10, loop: false },
+					],
 				];
 				for (const [name, Exporter, extra] of Array.from({ length: repeat }, (_, index) =>
-					cases.map(([name, Exporter, extra]) => [
-						repeat > 1 ? `${index + 1}-${name}` : name,
-						Exporter,
-						extra,
-					]),
+					cases
+						.filter(
+							([name]) =>
+								!only ||
+								(only === "gif" ? name.endsWith(".gif") : name === only + ".mp4"),
+						)
+						.map(([name, Exporter, extra]) => [
+							repeat > 1 ? `${index + 1}-${name}` : name,
+							Exporter,
+							extra,
+						]),
 				).flat()) {
 					console.info("[export-smoke] Starting " + name);
 					const exporter = new Exporter({ ...config, ...extra });
@@ -425,7 +483,7 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 				}
 				return results;
 			},
-			{ sourcePath, audioPath, clips, trims, speeds, narration, repeat },
+			{ sourcePath, audioPath, clips, trims, speeds, narration, repeat, dimensions, only },
 		);
 		for (const result of exports) {
 			const target = path.join(profile, result.name);

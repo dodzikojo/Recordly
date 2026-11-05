@@ -591,7 +591,7 @@ export class ModernVideoExporter {
 				this.renderer = new ModernFrameRenderer({
 					width: this.config.width,
 					height: this.config.height,
-					preferredRenderBackend: undefined,
+					preferredRenderBackend: this.config.preferredRenderBackend,
 					wallpaper: this.config.wallpaper,
 					zoomRegions: this.config.zoomRegions,
 					showShadow: this.config.showShadow,

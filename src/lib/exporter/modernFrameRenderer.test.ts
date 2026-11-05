@@ -202,6 +202,39 @@ function createRenderer() {
 	});
 }
 
+describe("ModernFrameRenderer decoded screen uploads", () => {
+	it.each([
+		"webgpu",
+		"webgl",
+	] as const)("copies scene pixels on %s before the decoder can release them", async (backend) => {
+		const canvas = createMockCanvas();
+		const bitmap = { close: vi.fn() };
+		const createBitmap = vi.fn(async () => bitmap);
+		vi.stubGlobal("document", { createElement: () => canvas });
+		vi.stubGlobal("createImageBitmap", createBitmap);
+		try {
+			const renderer = createRenderer() as unknown as {
+				rendererBackend: typeof backend;
+				resolveDetachedVideoFrameSource(
+					frame: VideoFrame,
+					kind: "scene" | "background",
+					width: number,
+					height: number,
+				): Promise<CanvasImageSource>;
+			};
+			renderer.rendererBackend = backend;
+			const frame = { displayWidth: 3840, displayHeight: 2160, timestamp: 0 } as VideoFrame;
+			expect(await renderer.resolveDetachedVideoFrameSource(frame, "scene", 640, 360)).toBe(
+				canvas,
+			);
+			expect(canvas.context.drawImage).toHaveBeenCalledWith(frame, 0, 0, 3840, 2160);
+			expect(createBitmap).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+});
+
 describe("ModernFrameRenderer Pixi lifecycle", () => {
 	it("continues to the next backend when failed-init cleanup would throw", async () => {
 		pixiApplicationInstancesMock.length = 0;
@@ -457,8 +490,8 @@ describe("ModernFrameRenderer webcam frame cache", () => {
 
 		const result = renderer.stageVideoFrameForTexture(frame, "webcam", 640, 360);
 
-		expect(result).toBe(renderer.webcamVideoFrameStagingCanvas);
-		expect(renderer.webcamVideoFrameStagingCtx.drawImage).toHaveBeenCalledWith(
+		expect(result).toMatchObject({ width: 320, height: 180 });
+		expect((result as HTMLCanvasElement).getContext("2d")?.drawImage).toHaveBeenCalledWith(
 			frame,
 			0,
 			0,
@@ -487,8 +520,8 @@ describe("ModernFrameRenderer webcam frame cache", () => {
 
 			const result = renderer.stageVideoFrameForTexture(frame, "webcam", 640, 360);
 
-			expect(result).toBe(renderer.webcamVideoFrameStagingCanvas);
-			expect(renderer.webcamVideoFrameStagingCtx.drawImage).toHaveBeenCalledWith(
+			expect(result).toMatchObject({ width: 320, height: 180 });
+			expect((result as HTMLCanvasElement).getContext("2d")?.drawImage).toHaveBeenCalledWith(
 				frame,
 				0,
 				0,

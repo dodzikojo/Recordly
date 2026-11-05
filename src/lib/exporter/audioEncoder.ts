@@ -25,6 +25,7 @@ const OFFLINE_ENCODE_CHUNK_FRAMES = 1024;
 const OFFLINE_CHUNK_DURATION_SEC = 30;
 const OFFLINE_MIX_SOFT_LIMITER_THRESHOLD = 0.9;
 const OFFLINE_MIX_SOFT_LIMITER_CEILING = 0.985;
+const NO_AUDIO_STREAM = Symbol("no-audio-stream");
 
 function softLimitSample(sample: number): number {
 	const magnitude = Math.abs(sample);
@@ -1116,6 +1117,7 @@ export class AudioProcessor {
 	private async decodeAudioFromUrl(url: string): Promise<AudioBuffer | null> {
 		try {
 			const buffer = await this.streamDecodeFromUrl(url);
+			if (buffer === NO_AUDIO_STREAM) return null;
 			if (buffer) return buffer;
 		} catch (error) {
 			console.warn(
@@ -1129,7 +1131,9 @@ export class AudioProcessor {
 
 	// Streaming decode via WebDemuxer + AudioDecoder. Decodes audio chunk-by-chunk
 	// without loading the entire compressed file into a contiguous ArrayBuffer.
-	private async streamDecodeFromUrl(url: string): Promise<AudioBuffer | null> {
+	private async streamDecodeFromUrl(
+		url: string,
+	): Promise<AudioBuffer | null | typeof NO_AUDIO_STREAM> {
 		const source = await resolveMediaElementSource(url);
 		let demuxer: WebDemuxer | null = null;
 
@@ -1137,6 +1141,18 @@ export class AudioProcessor {
 			const wasmUrl = new URL("./wasm/web-demuxer.wasm", window.location.href).href;
 			demuxer = new WebDemuxer({ wasmFilePath: wasmUrl });
 			await demuxer.load(source.src);
+			const info = await demuxer.getMediaInfo();
+			if (!info.streams.some((stream) => stream.codec_type_string === "audio")) {
+				const isAudioFile = /\.(?:wav|mp3|m4a|aac|flac|ogg|opus)(?:$|[?#])/i.test(url);
+				const hasVideo = info.streams.some(
+					(stream) =>
+						stream.codec_type_string === "video" &&
+						stream.width > 0 &&
+						stream.height > 0,
+				);
+				// Trust a valid silent video, but retain browser fallback for misdetected audio files.
+				return hasVideo && !isAudioFile ? NO_AUDIO_STREAM : null;
+			}
 
 			let audioConfig: AudioDecoderConfig;
 			try {
