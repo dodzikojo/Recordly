@@ -1,0 +1,95 @@
+{
+	"updated": "2026-11-05",
+	"status": "first-batch-ready-for-review; decoder-recovery-pending",
+	"authorization": "User authorized stability backports, starting with preview memory cleanup. Keep current UI, no sign-in, and every fork feature. Merging this new batch has not been requested.",
+	"oursBeforeBackports": "136092637e0f62a2f55ba091e16462b6bd54c2f6",
+	"upstreamInspected": "109ca3a13c362e969d9add25d1f93406c36dba2a",
+	"integrationPolicy": {
+		"strategy": "Adapt selected fixes in focused PRs; never replace the fork with upstream main.",
+		"historyWarning": "Our fork point 12146e94 and upstream 94cb91b8 have identical tree a1a7f3e5e9638c69c87941d1627d8eca6f2e52c9 but different histories. Ordinary merge simulates 350 conflicted files; corrected-baseline merge still conflicts in 71.",
+		"excluded": [
+			"HeroUI/React migration",
+			"mandatory sign-in",
+			"Supabase and cloud sharing",
+			"export reporting service",
+			"upstream gap-closing project migration"
+		],
+		"preserve": [
+			"webcam blur and offline assets",
+			"taskbar exclusion",
+			"window framing and top inset",
+			"local HTTP/MCP recording and agent cursor",
+			"preview timing and independent narration",
+			"keyboard deletion and ripple delete",
+			"gap closing and clip multi-select/bulk editing",
+			"resizable timeline",
+			"per-clip cursor hiding",
+			"project audio permissions",
+			"exact clip source endpoints and ordered export frames",
+			"decoder dequeue/shutdown fixes",
+			"VideoFrameStager and silent-video audio probe"
+		]
+	},
+	"completed": [
+		{
+			"name": "Preview video-source cleanup",
+			"upstreamPR": 892,
+			"commit": "33b53f8a7341654836f5d737755f4ff55e094bd8",
+			"pr": "https://github.com/dodzikojo/Recordly/pull/17",
+			"branch": "codex/backport-preview-memory-cleanup",
+			"base": "main",
+			"merged": false
+		},
+		{
+			"name": "Browser microphone no-AGC default",
+			"upstreamPR": 933,
+			"commit": "8ab97d6",
+			"pr": "https://github.com/dodzikojo/Recordly/pull/18",
+			"branch": "codex/backport-browser-mic-no-agc",
+			"base": "codex/backport-preview-memory-cleanup",
+			"merged": false
+		},
+		{
+			"name": "Vitest 3.2.7 security update",
+			"upstreamCommit": "97523ff78fc50ec8f3189ee0745e957b4ad92a3b",
+			"commit": "42d643a5",
+			"pr": "https://github.com/dodzikojo/Recordly/pull/19",
+			"branch": "codex/backport-vitest-security-update",
+			"base": "codex/backport-browser-mic-no-agc",
+			"merged": false
+		}
+	],
+	"validation": {
+		"runtime": "Node 22.23.4, Windows; installs use --ignore-scripts to preserve native helpers.",
+		"unit": "Vitest 3.2.7: 151 files passed; 1409 tests passed, 2 skipped.",
+		"quality": "TypeScript, lint (18 existing warnings), i18n parity, touched-code formatting and whitespace checks pass. Production Vite renderer/Electron build, main CJS smoke, and nine segmentation assets/notices pass.",
+		"preview": "Real isolated Electron editor: 120 radius changes, 20 padding changes, ten 4K/1080p switches, stable listener counts and replaced sources destroyed, playback and backward paused-seek pixels. Screenshot inspected. Same smoke against 13609263 fails source release. No VRAM byte-reduction claim.",
+		"microphone": "Real isolated Electron synthetic microphone: actual AGC=false, echo/noise=true; MediaRecorder audio decodes to 1.56s, RMS 0.0876. Physical affected headset not tested.",
+		"commands": [
+			"node tools/playwright/smoke-preview-memory.cjs",
+			"node tools/playwright/smoke-preview-memory.cjs --baseline 13609263",
+			"node node_modules/vitest/vitest.mjs run --maxWorkers=4 --minWorkers=1"
+		]
+	},
+	"next": {
+		"name": "Adapt software decoder recovery (upstream PR #1075)",
+		"status": "not implemented; use a fresh session for this focused exporter slice",
+		"startingPoint": "Confirm current PR/branch state before editing; preserve all three preceding backports. No additional permission needed to implement the authorized stability work.",
+		"source": "git diff 94d2cde3^1 94d2cde3 -- src/lib/exporter/streamingDecodePipeline.ts src/lib/exporter/streamingDecoderSupport.ts src/lib/exporter/streamingDecoder.test.ts",
+		"reasonToAdapt": "Upstream split its decoder and changed the timeline model. Ours retains a legacy streaming path and decodeClipTimeline/startClipDecodeSession for exact ordered/repeated source ranges. Do not transplant upstream's wrapper/decoder wholesale.",
+		"requirements": [
+			"Retry eligible decoder EncodingError/QuotaExceededError once using software, excluding AV1 which already prefers software.",
+			"Replay rebuilds decode state but skips already-successful output callbacks; preserve output timestamps, active clip, source/cursor times and sourceEndMs.",
+			"Do not retry cancellation, configuration errors, renderer/encoder callback failures or arbitrary exceptions.",
+			"Close held/queued/in-flight frames and decoder before awaiting feed/flush; cancel readers and wake backpressure/dequeue waiters.",
+			"Preserve both failure contexts if the software decoder also fails; last submitted chunk is approximate evidence, not proof of corruption.",
+			"Keep reporting service, account UI, upstream project/timeline normalization and broad decoder refactor out of this PR."
+		],
+		"verification": [
+			"TDD both existing decoder paths: partial-output recovery/no duplication, cleanup, backward/repeated clips, cancellation and no-retry cases, failed software attempt.",
+			"Full unit suite, TypeScript and targeted lint/format.",
+			"Real Electron MP4 smoke including injected eligible decoder failure, plus normal 4K WebGL/WebGPU/legacy MP4/GIF timeline smoke.",
+			"Keep prior raw-frame ownership, narration, tail-duration and native-export eligibility regressions passing."
+		]
+	}
+}
