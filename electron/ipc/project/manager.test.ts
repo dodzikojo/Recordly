@@ -118,6 +118,24 @@ describe("local media path policy", () => {
 		expect(isAllowedMediaPath(textPath)).toBe(false);
 	});
 
+	it.each([
+		"m4a",
+		"aac",
+		"flac",
+	])("serves supported %s audio only after approval", async (extension) => {
+		const externalPath = path.join(tempRoot, "Downloads", "narration." + extension);
+		await fs.mkdir(path.dirname(externalPath), { recursive: true });
+		await fs.writeFile(externalPath, "audio");
+		const { resolveApprovedLocalMediaPath, rememberApprovedLocalReadPath } = await import(
+			"./manager"
+		);
+		expect(await resolveApprovedLocalMediaPath(externalPath)).toBeNull();
+		await rememberApprovedLocalReadPath(externalPath);
+		expect(await resolveApprovedLocalMediaPath(externalPath)).toBe(
+			await fs.realpath(externalPath),
+		);
+	});
+
 	it("rejects symlinks under allowed prefixes that point outside the allowlist", async () => {
 		const outsideTarget = path.join(tempRoot, "outside-secret.mp4");
 		const symlinkInsideUserData = path.join(userDataPath, "shortcut-to-secret.mp4");
