@@ -78,6 +78,53 @@ afterEach(() => {
 });
 
 describe("ModernVideoExporter native static-layout eligibility", () => {
+	it("retains source-copy and filtergraph audio acceleration for equivalent clips", () => {
+		expect(
+			createExporter({
+				clipRegions: [{ id: "all", startMs: 0, endMs: 60000, speed: 1 }],
+			}).buildNativeAudioPlan(videoInfo),
+		).toMatchObject({ audioMode: "copy-source" });
+		expect(
+			createExporter({
+				clipRegions: [
+					{
+						id: "fast",
+						startMs: 0,
+						endMs: 30000,
+						sourceStartMs: 0,
+						sourceEndMs: 60000,
+						speed: 2,
+					},
+				],
+				speedRegions: [{ id: "speed", startMs: 0, endMs: 60000, speed: 2 }],
+			}).buildNativeAudioPlan(videoInfo),
+		).toMatchObject({ audioMode: "edited-track", strategy: "filtergraph-fast-path" });
+	});
+
+	it("declines a repeated clip sequence and renders its audio without the source-union fast path", () => {
+		const exporter = createExporter({
+			clipRegions: [
+				{ id: "a", startMs: 0, endMs: 1000, sourceStartMs: 0, sourceEndMs: 2000, speed: 2 },
+				{
+					id: "b",
+					startMs: 1000,
+					endMs: 3000,
+					sourceStartMs: 1000,
+					sourceEndMs: 3000,
+					speed: 1,
+				},
+			],
+		});
+		expect(exporter.getNativeStaticLayoutEffectiveDuration(videoInfo)).toBe(3);
+		expect(
+			exporter.getNativeStaticLayoutSkipReasons({ audioMode: "none" }, videoInfo, 3),
+		).toContain("unsupported-clip-sequence");
+		expect(exporter.buildNativeAudioPlan(videoInfo)).toMatchObject({
+			audioMode: "edited-track",
+			strategy: "offline-render-fallback",
+		});
+	});
+
 	it("uses software composition when a visible cursor is hidden for a clip", () => {
 		const exporter = createExporter({
 			showCursor: true,

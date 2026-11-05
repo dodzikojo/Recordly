@@ -10,6 +10,7 @@ import type {
 } from "@/components/video-editor/types";
 import { buildResolvedAudioPlan, SourceTrackId } from "@/lib/exporter/audioRoutingEngine";
 import { estimateCompanionAudioStartDelaySeconds } from "@/lib/mediaTiming";
+import { buildClipTimelineSlices, clipTimelineMatchesLegacy } from "./clipTimeline";
 import { resolveMediaElementSource } from "./localMediaSource";
 import type { VideoMuxer } from "./muxer";
 import { resolveSourceTrackRoutingPolicy } from "./sourceTrackRoutingPolicy";
@@ -119,6 +120,8 @@ interface TimelineSlice {
 	sourceStartMs: number;
 	sourceEndMs: number;
 	speed: number;
+	outputStartMs?: number;
+	outputEndMs?: number;
 }
 
 interface PreparedOfflineRender {
@@ -278,8 +281,26 @@ export class AudioProcessor {
 			requiresLegacyMacMicSidecarMix ||
 			hasTimedCompanionAudio;
 
+		let requiresClipRemapping = false;
+		if (clipRegions?.length) {
+			let sourceDurationMs = 0;
+			try {
+				sourceDurationMs = demuxer
+					? (await demuxer.getMediaInfo()).duration * 1000
+					: (await this.getMediaDurationSec(videoUrl)) * 1000;
+			} catch {
+				// If source bounds cannot be established, the ordered clip renderer remains authoritative.
+			}
+			requiresClipRemapping = !clipTimelineMatchesLegacy(
+				clipRegions,
+				sourceDurationMs,
+				sortedTrims,
+				sortedSpeedRegions,
+			);
+		}
 		// When speed edits, audio regions, or multiple audio sources need mixing, use offline AudioContext pipeline.
 		if (
+			requiresClipRemapping ||
 			sortedSpeedRegions.length > 0 ||
 			sortedAudioRegions.length > 0 ||
 			needsSourceAudioMixing ||
@@ -795,7 +816,9 @@ export class AudioProcessor {
 		const sourceDurationMs = sourceDurationSec * 1000;
 
 		// Build timeline slices (non-trimmed segments with speed info)
-		const slices = this.buildTimelineSlices(sourceDurationMs, trimRegions, speedRegions);
+		const clipSlices = clipRegions?.length ? buildClipTimelineSlices(clipRegions) : null;
+		const slices =
+			clipSlices ?? this.buildTimelineSlices(sourceDurationMs, trimRegions, speedRegions);
 		// User overlays have their own duration. Video cuts/speed only determine
 		// their placed start in the edited output, not their tempo or length.
 		for (const entry of regionEntries) {
@@ -814,7 +837,10 @@ export class AudioProcessor {
 
 		let outputDurationMs = 0;
 		for (const slice of slices) {
-			outputDurationMs += (slice.sourceEndMs - slice.sourceStartMs) / slice.speed;
+			outputDurationMs +=
+				slice.outputEndMs !== undefined && slice.outputStartMs !== undefined
+					? slice.outputEndMs - slice.outputStartMs
+					: (slice.sourceEndMs - slice.sourceStartMs) / slice.speed;
 		}
 
 		// Extend for audio regions that might exceed the video timeline
@@ -823,17 +849,11 @@ export class AudioProcessor {
 		}
 
 		const numChannels = Math.min(primaryBuffer?.numberOfChannels ?? 2, 2);
-		const mutedSourceOutputRangesSec = (clipRegions ?? [])
-			.filter(
-				(clip) =>
-					Boolean(clip.muted) &&
-					Number.isFinite(clip.startMs) &&
-					Number.isFinite(clip.endMs) &&
-					clip.endMs > clip.startMs,
-			)
-			.map((clip) => ({
-				startSec: Math.max(0, clip.startMs / 1000),
-				endSec: Math.max(0, clip.endMs / 1000),
+		const mutedSourceOutputRangesSec = (clipSlices ?? [])
+			.filter((slice) => Boolean(slice.clip.muted))
+			.map((slice) => ({
+				startSec: slice.outputStartMs / 1000,
+				endSec: slice.outputEndMs / 1000,
 			}));
 
 		return {
@@ -1449,7 +1469,10 @@ export class AudioProcessor {
 
 		for (const slice of slices) {
 			const sliceSourceDurationSec = (slice.sourceEndMs - slice.sourceStartMs) / 1000;
-			const sliceOutputDurationSec = sliceSourceDurationSec / slice.speed;
+			const sliceOutputDurationSec =
+				slice.outputEndMs !== undefined && slice.outputStartMs !== undefined
+					? (slice.outputEndMs - slice.outputStartMs) / 1000
+					: sliceSourceDurationSec / slice.speed;
 
 			// Where in the buffer does this slice read from?
 			const bufferOffsetSec = slice.sourceStartMs / 1000 - sourceStartDelaySec;

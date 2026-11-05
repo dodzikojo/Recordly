@@ -1,6 +1,7 @@
 import { WebDemuxer } from "web-demuxer";
-import type { SpeedRegion, TrimRegion } from "@/components/video-editor/types";
+import type { ClipRegion, SpeedRegion, TrimRegion } from "@/components/video-editor/types";
 import { getEffectiveVideoStreamDurationSeconds } from "@/lib/mediaTiming";
+import { buildClipTimelineSlices, getClipTimelineFrame } from "./clipTimeline";
 import { createFallbackDemuxerSource, resolveMediaResourceUrl } from "./localMediaSource";
 
 const DEFAULT_MAX_DECODE_QUEUE = 12;
@@ -33,6 +34,7 @@ type OnFrameCallback = (
 	exportTimestampUs: number,
 	sourceTimestampMs: number,
 	cursorTimestampMs: number,
+	clip?: ClipRegion,
 ) => Promise<void>;
 
 export function getDecodedFrameStartupOffsetUs(
@@ -74,6 +76,7 @@ export class StreamingVideoDecoder {
 	private cancelled = false;
 	private metadata: DecodedVideoInfo | null = null;
 	private pendingFrames: VideoFrame[] = [];
+	private cancelClipDecode: (() => void) | null = null;
 	private readonly maxDecodeQueue: number;
 	private readonly maxPendingFrames: number;
 
@@ -197,9 +200,14 @@ export class StreamingVideoDecoder {
 		trimRegions: TrimRegion[] | undefined,
 		speedRegions: SpeedRegion[] | undefined,
 		onFrame: OnFrameCallback,
+		clipRegions?: ClipRegion[],
 	): Promise<void> {
 		if (!this.demuxer || !this.metadata) {
 			throw new Error("Must call loadMetadata() before decodeAll()");
+		}
+		if (clipRegions?.length) {
+			await this.decodeClipTimeline(targetFrameRate, clipRegions, onFrame);
+			return;
 		}
 
 		const decoderConfig = await this.demuxer.getDecoderConfig("video");
@@ -282,6 +290,7 @@ export class StreamingVideoDecoder {
 				notifyBackpressureProgress();
 			},
 		});
+		this.decoder.ondequeue = notifyBackpressureProgress;
 		const preferredDecoderConfig = shouldPreferSoftwareDecode
 			? {
 					...decoderConfig,
@@ -568,6 +577,222 @@ export class StreamingVideoDecoder {
 		}
 	}
 
+	/** Restart at a preceding keyframe only when the edited sequence moves backwards. */
+	private async decodeClipTimeline(
+		frameRate: number,
+		clips: ClipRegion[],
+		onFrame: OnFrameCallback,
+	): Promise<void> {
+		const slices = buildClipTimelineSlices(clips);
+		const count = Math.ceil(((slices[slices.length - 1]?.outputEndMs ?? 0) / 1000) * frameRate);
+		let session: Awaited<ReturnType<StreamingVideoDecoder["startClipDecodeSession"]>> | null =
+			null;
+		let lastSourceMs = -Infinity;
+		try {
+			for (let index = 0; index < count && !this.cancelled; index++) {
+				const target = getClipTimelineFrame(slices, index, frameRate)!;
+				if (!session || target.sourceTimestampMs < lastSourceMs) {
+					await session?.close();
+					if (this.cancelled) break;
+					session = await this.startClipDecodeSession(target.sourceTimestampMs / 1000);
+				}
+				lastSourceMs = target.sourceTimestampMs;
+				const frame = await session.frameAt(target.sourceTimestampMs / 1000);
+				if (this.cancelled) break;
+				if (!frame) throw new Error("Video decode produced no frame for the edited clip");
+				await onFrame(
+					frame,
+					(index * 1_000_000) / frameRate,
+					target.sourceTimestampMs,
+					target.sourceTimestampMs,
+					target.clip,
+				);
+			}
+		} finally {
+			await session?.close();
+		}
+	}
+
+	private async startClipDecodeSession(startSec: number) {
+		const metadata = this.metadata!;
+		const config = await this.demuxer!.getDecoderConfig("video");
+		const pending = this.pendingFrames;
+		let held: VideoFrame | null = null;
+		let heldSec = 0;
+		let lookahead: VideoFrame | null = null;
+		let done = false;
+		let stopped = false;
+		let error: Error | null = null;
+		let firstTimestampUs: number | null = null;
+		let timelineOffsetUs = 0;
+		let frameWaiter: ((frame: VideoFrame | null) => void) | null = null;
+		const finishWaiting = () => {
+			const resolve = frameWaiter;
+			frameWaiter = null;
+			resolve?.(null);
+		};
+		const capacityWaiters = new Set<() => void>();
+		const notify = () => {
+			for (const resolve of capacityWaiters) resolve();
+			capacityWaiters.clear();
+		};
+		const decoder = new VideoDecoder({
+			output: (frame) => {
+				if (stopped || this.cancelled) frame.close();
+				else if (frameWaiter) {
+					const resolve = frameWaiter;
+					frameWaiter = null;
+					resolve(frame);
+				} else pending.push(frame);
+				notify();
+			},
+			error: (cause) => {
+				error = new Error(`VideoDecoder error: ${cause.message}`);
+				finishWaiting();
+				notify();
+			},
+		});
+		decoder.ondequeue = notify;
+		this.decoder = decoder;
+		try {
+			const software = /av01|av1/.test(metadata.codec.toLowerCase());
+			try {
+				decoder.configure(
+					software ? { ...config, hardwareAcceleration: "prefer-software" } : config,
+				);
+			} catch (cause) {
+				if (!software) throw cause;
+				decoder.configure(config);
+			}
+		} catch (cause) {
+			decoder.close();
+			this.decoder = null;
+			throw cause;
+		}
+		const endSec =
+			Math.max(
+				metadata.duration + (metadata.mediaStartTime ?? 0),
+				(metadata.streamDuration ?? metadata.duration) +
+					(metadata.streamStartTime ?? metadata.mediaStartTime ?? 0),
+			) + 0.5;
+		// web-demuxer defaults to backward keyframe seeking, keeping decoder pre-roll.
+		let reader: ReadableStreamDefaultReader<EncodedVideoChunk>;
+		try {
+			reader = this.demuxer!.read(
+				"video",
+				Math.max(0, startSec + (metadata.mediaStartTime ?? 0)),
+				endSec,
+			).getReader();
+		} catch (cause) {
+			decoder.close();
+			this.decoder = null;
+			throw cause;
+		}
+		let cancelRead: Promise<void> | null = null;
+		const stop = () => {
+			stopped = true;
+			notify();
+			finishWaiting();
+			cancelRead ??= reader.cancel().catch(() => {
+				// A reader that has already ended needs no further cancellation.
+			});
+		};
+		this.cancelClipDecode = stop;
+		const feed = (async () => {
+			try {
+				while (!stopped && !this.cancelled && !error) {
+					const { done: readDone, value } = await reader.read();
+					if (readDone || !value) break;
+					while (
+						!stopped &&
+						!this.cancelled &&
+						!error &&
+						(decoder.decodeQueueSize > this.maxDecodeQueue ||
+							pending.length > this.maxPendingFrames)
+					) {
+						await new Promise<void>((resolve) => capacityWaiters.add(resolve));
+					}
+					if (stopped || this.cancelled || error) break;
+					decoder.decode(value);
+				}
+				if (!stopped && !this.cancelled && !error && decoder.state === "configured")
+					await decoder.flush();
+			} catch (cause) {
+				if (!stopped) error = cause instanceof Error ? cause : new Error(String(cause));
+			} finally {
+				done = true;
+				finishWaiting();
+				notify();
+			}
+		})();
+		const next = async (): Promise<VideoFrame | null> => {
+			if (error) throw error;
+			const frame = pending.shift();
+			if (frame) {
+				notify();
+				return frame;
+			}
+			if (done || stopped || this.cancelled) return null;
+			const result = await new Promise<VideoFrame | null>((resolve) => {
+				frameWaiter = resolve;
+			});
+			if (error) {
+				result?.close();
+				throw error;
+			}
+			return result;
+		};
+		const frameSec = (frame: VideoFrame) => {
+			if (firstTimestampUs === null) {
+				firstTimestampUs = frame.timestamp;
+				timelineOffsetUs = getDecodedFrameTimelineOffsetUs(frame.timestamp, metadata);
+			}
+			return Math.max(0, (frame.timestamp - firstTimestampUs + timelineOffsetUs) / 1_000_000);
+		};
+		return {
+			frameAt: async (targetSec: number) => {
+				if (!held) {
+					held = await next();
+					if (!held) return null;
+					heldSec = frameSec(held);
+				}
+				while (!stopped && !this.cancelled) {
+					lookahead ??= await next();
+					if (!lookahead) {
+						if (targetSec - heldSec > 1)
+							throw new Error(
+								`Video decode ended early at ${heldSec.toFixed(3)}s (needed ${targetSec.toFixed(3)}s).`,
+							);
+						return held;
+					}
+					const nextSec = Math.max(heldSec, frameSec(lookahead));
+					if (targetSec <= (heldSec + nextSec) / 2) return held;
+					held.close();
+					held = lookahead;
+					heldSec = nextSec;
+					lookahead = null;
+				}
+				return null;
+			},
+			close: async () => {
+				stop();
+				// Hardware flush can wait for surfaces retained by these frames. Release
+				// them and abort the decoder before waiting for the feeder to finish.
+				held?.close();
+				held = null;
+				lookahead?.close();
+				lookahead = null;
+				for (const frame of pending) frame.close();
+				pending.length = 0;
+				if (decoder.state !== "closed") decoder.close();
+				await cancelRead;
+				await feed;
+				if (this.decoder === decoder) this.decoder = null;
+				if (this.cancelClipDecode === stop) this.cancelClipDecode = null;
+			},
+		};
+	}
+
 	private computeSegments(
 		totalDuration: number,
 		trimRegions?: TrimRegion[],
@@ -596,8 +821,16 @@ export class StreamingVideoDecoder {
 		return segments;
 	}
 
-	getEffectiveDuration(trimRegions?: TrimRegion[], speedRegions?: SpeedRegion[]): number {
+	getEffectiveDuration(
+		trimRegions?: TrimRegion[],
+		speedRegions?: SpeedRegion[],
+		clipRegions?: ClipRegion[],
+	): number {
 		if (!this.metadata) throw new Error("Must call loadMetadata() first");
+		if (clipRegions?.length) {
+			const slices = buildClipTimelineSlices(clipRegions);
+			return (slices[slices.length - 1]?.outputEndMs ?? 0) / 1000;
+		}
 		const trimSegments = this.computeSegments(
 			getEffectiveVideoStreamDurationSeconds({
 				duration: this.metadata.duration,
@@ -655,6 +888,7 @@ export class StreamingVideoDecoder {
 
 	cancel(): void {
 		this.cancelled = true;
+		this.cancelClipDecode?.();
 	}
 
 	getDemuxer() {
@@ -663,6 +897,7 @@ export class StreamingVideoDecoder {
 
 	destroy(): void {
 		this.cancelled = true;
+		this.cancelClipDecode?.();
 
 		if (this.decoder) {
 			try {

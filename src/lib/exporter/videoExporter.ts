@@ -18,6 +18,7 @@ import type {
 } from "@/components/video-editor/types";
 import { getEffectiveVideoStreamDurationSeconds } from "@/lib/mediaTiming";
 import { AudioProcessor, isAacAudioEncodingSupported } from "./audioEncoder";
+import { clipTimelineMatchesLegacy } from "./clipTimeline";
 import { buildEditedTrackSourceSegments, classifyEditedTrackStrategy } from "./editedTrackStrategy";
 import {
 	advanceFinalizationProgress,
@@ -287,6 +288,7 @@ export class VideoExporter {
 			const effectiveDuration = this.streamingDecoder.getEffectiveDuration(
 				this.config.trimRegions,
 				this.config.speedRegions,
+				this.config.clipRegions,
 			);
 			this.effectiveDurationSec = effectiveDuration;
 			const totalFrames = Math.ceil(effectiveDuration * this.config.frameRate);
@@ -307,7 +309,13 @@ export class VideoExporter {
 				this.config.frameRate,
 				this.config.trimRegions,
 				this.config.speedRegions,
-				async (videoFrame, _exportTimestampUs, sourceTimestampMs, cursorTimestampMs) => {
+				async (
+					videoFrame,
+					_exportTimestampUs,
+					sourceTimestampMs,
+					cursorTimestampMs,
+					clip,
+				) => {
 					if (this.cancelled) {
 						return;
 					}
@@ -321,6 +329,7 @@ export class VideoExporter {
 						cursorTimestampUs,
 						frameDuration,
 						timestamp,
+						clip,
 					);
 
 					if (useNativeEncoder) {
@@ -332,6 +341,7 @@ export class VideoExporter {
 					this.processedFrameCount = frameIndex;
 					this.reportProgress(frameIndex, totalFrames);
 				},
+				this.config.clipRegions,
 			);
 
 			if (this.cancelled) {
@@ -548,6 +558,12 @@ export class VideoExporter {
 	}
 
 	private buildNativeAudioPlan(videoInfo: DecodedVideoInfo): NativeAudioPlan {
+		const requiresClipRemapping = !clipTimelineMatchesLegacy(
+			this.config.clipRegions,
+			getEffectiveVideoStreamDurationSeconds(videoInfo) * 1000,
+			this.config.trimRegions,
+			this.config.speedRegions,
+		);
 		const speedRegions = this.config.speedRegions ?? [];
 		const audioRegions = this.config.audioRegions ?? [];
 		const sourceAudioFallbackPaths = (this.config.sourceAudioFallbackPaths ?? []).filter(
@@ -577,6 +593,7 @@ export class VideoExporter {
 		}
 
 		if (
+			requiresClipRemapping ||
 			speedRegions.length > 0 ||
 			audioRegions.length > 0 ||
 			sourceAudioFallbackPaths.length > 1 ||
@@ -602,16 +619,17 @@ export class VideoExporter {
 				typeof primaryAudioSourceSampleRate === "number" &&
 				Number.isFinite(primaryAudioSourceSampleRate) &&
 				primaryAudioSourceSampleRate > 0;
-			const strategy = canUsePrimaryAudioFiltergraph
-				? classifyEditedTrackStrategy({
-						primaryAudioSourcePath,
-						sourceDurationMs,
-						trimRegions,
-						speedRegions,
-						audioRegions,
-						sourceAudioFallbackPaths,
-					})
-				: "offline-render-fallback";
+			const strategy =
+				canUsePrimaryAudioFiltergraph && !requiresClipRemapping
+					? classifyEditedTrackStrategy({
+							primaryAudioSourcePath,
+							sourceDurationMs,
+							trimRegions,
+							speedRegions,
+							audioRegions,
+							sourceAudioFallbackPaths,
+						})
+					: "offline-render-fallback";
 
 			if (strategy === "filtergraph-fast-path") {
 				const audioSourcePath = primaryAudioSourcePath;

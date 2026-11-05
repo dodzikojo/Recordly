@@ -1,3 +1,4 @@
+import { getClipCursorRegions } from "./clipTimeline";
 import { Application, BlurFilter, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 import {
 	getVisibleCursorTelemetry,
@@ -479,11 +480,12 @@ export class FrameRenderer {
 	private currentVideoTime = 0;
 	private cursorOverlay: PixiCursorOverlay | null = null;
 	private cursorFrameTimeMs: number | undefined;
+	private activeCursorClips: ClipRegion[] | undefined;
 
 	private getFrameCursorTelemetry(timeMs: number) {
 		return getVisibleCursorTelemetry(
 			this.config.cursorTelemetry,
-			this.config.clipRegions,
+			this.activeCursorClips ?? this.config.clipRegions,
 			timeMs,
 			this.cursorFrameTimeMs,
 		);
@@ -2702,8 +2704,10 @@ export class FrameRenderer {
 		if (this.webcamForwardFrameSource) {
 			const clampedTime = clampMediaTimeToDuration(webcamTargetTime, null);
 			try {
-				const decodedFrame =
-					await this.webcamForwardFrameSource.getFrameAtTime(clampedTime);
+				const decodedFrame = await this.webcamForwardFrameSource.getFrameAtTime(
+					clampedTime,
+					true,
+				);
 				this.closeWebcamDecodedFrame();
 				this.webcamDecodedFrame = decodedFrame;
 				if (decodedFrame) {
@@ -3262,6 +3266,7 @@ export class FrameRenderer {
 		cursorTimestamp = timestamp,
 		frameDurationUs?: number,
 		backgroundTimelineTimestamp = timestamp,
+		clip?: ClipRegion,
 	): Promise<void> {
 		if (!this.app || !this.videoContainer || !this.cameraContainer || !this.videoMaskGraphics) {
 			throw new Error("Renderer not initialized");
@@ -3269,6 +3274,7 @@ export class FrameRenderer {
 
 		this.currentVideoTime = timestamp / 1_000_000;
 		this.cursorFrameTimeMs = cursorTimestamp / 1000;
+		this.activeCursorClips = getClipCursorRegions(this.config.clipRegions, clip);
 
 		const resolvedVideoSource = await this.resolveDetachedVideoFrameSource(
 			videoFrame,
@@ -3509,7 +3515,7 @@ export class FrameRenderer {
 		this.emitCursorInteractions(cursorTimeMs);
 		if (
 			isCursorHiddenAtSourceTime(
-				this.config.clipRegions,
+				this.activeCursorClips ?? this.config.clipRegions,
 				this.cursorFrameTimeMs ?? cursorTimeMs,
 			)
 		)

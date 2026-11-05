@@ -67,6 +67,10 @@ changing product code in response can hide an environmental failure.
 - Preview and export intentionally have fallback paths for decoder/media-element and
   Pixi WebGPU/WebGL failures. New effects must fail soft (unprocessed webcam plus warning)
   instead of dropping the webcam or aborting an export.
+- During WebCodecs shutdown, release held/queued `VideoFrame`s and close the decoder
+  before awaiting its feed/flush promise. Retained hardware surfaces can otherwise
+  deadlock `flush()`. Wake input-queue backpressure waiters on `dequeue`, as well as
+  output and frame consumption.
 
 ## Project and settings compatibility
 

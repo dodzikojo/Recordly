@@ -262,6 +262,7 @@ export class GifExporter {
 			const effectiveDuration = this.streamingDecoder.getEffectiveDuration(
 				this.config.trimRegions,
 				this.config.speedRegions,
+				this.config.clipRegions,
 			);
 			const totalFrames = Math.ceil(effectiveDuration * this.config.frameRate);
 
@@ -284,7 +285,13 @@ export class GifExporter {
 				this.config.frameRate,
 				this.config.trimRegions,
 				this.config.speedRegions,
-				async (videoFrame, _exportTimestampUs, sourceTimestampMs, cursorTimestampMs) => {
+				async (
+					videoFrame,
+					_exportTimestampUs,
+					sourceTimestampMs,
+					cursorTimestampMs,
+					clip,
+				) => {
 					if (this.cancelled) {
 						return;
 					}
@@ -297,12 +304,14 @@ export class GifExporter {
 						cursorTimestampUs,
 						frameDurationUs,
 						frameIndex * frameDurationUs,
+						clip,
 					);
 
 					this.addRenderedGifFrame(frameDelay);
 					frameIndex++;
 					this.reportProgress(frameIndex, totalFrames);
 				},
+				this.config.clipRegions,
 			);
 
 			if (this.cancelled) {
