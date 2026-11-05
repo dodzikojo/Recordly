@@ -3,6 +3,7 @@ import type { ClipRegion, SpeedRegion, TrimRegion } from "@/components/video-edi
 import { getEffectiveVideoStreamDurationSeconds } from "@/lib/mediaTiming";
 import { buildClipTimelineSlices, getClipTimelineFrame } from "./clipTimeline";
 import { createFallbackDemuxerSource, resolveMediaResourceUrl } from "./localMediaSource";
+import { VideoDecodeFailure, withVideoDecodeRecovery } from "./videoDecodeRecovery";
 
 const DEFAULT_MAX_DECODE_QUEUE = 12;
 const DEFAULT_MAX_PENDING_FRAMES = 32;
@@ -76,7 +77,7 @@ export class StreamingVideoDecoder {
 	private cancelled = false;
 	private metadata: DecodedVideoInfo | null = null;
 	private pendingFrames: VideoFrame[] = [];
-	private cancelClipDecode: (() => void) | null = null;
+	private cancelActiveDecode: (() => void) | null = null;
 	private readonly maxDecodeQueue: number;
 	private readonly maxPendingFrames: number;
 
@@ -205,17 +206,39 @@ export class StreamingVideoDecoder {
 		if (!this.demuxer || !this.metadata) {
 			throw new Error("Must call loadMetadata() before decodeAll()");
 		}
-		if (clipRegions?.length) {
-			await this.decodeClipTimeline(targetFrameRate, clipRegions, onFrame);
-			return;
-		}
+		await withVideoDecodeRecovery<Parameters<OnFrameCallback>>({
+			codec: this.metadata.codec,
+			isCancelled: () => this.cancelled,
+			onFrame,
+			attempt: (deliver, forceSoftware) =>
+				clipRegions?.length
+					? this.decodeClipTimeline(targetFrameRate, clipRegions, deliver, forceSoftware)
+					: this.decodeLegacyTimeline(
+							targetFrameRate,
+							trimRegions,
+							speedRegions,
+							deliver,
+							forceSoftware,
+						),
+		});
+	}
 
-		const decoderConfig = await this.demuxer.getDecoderConfig("video");
-		const codec = this.metadata.codec.toLowerCase();
-		const shouldPreferSoftwareDecode = codec.includes("av01") || codec.includes("av1");
+	private async decodeLegacyTimeline(
+		targetFrameRate: number,
+		trimRegions: TrimRegion[] | undefined,
+		speedRegions: SpeedRegion[] | undefined,
+		onFrame: OnFrameCallback,
+		forceSoftware: boolean,
+	): Promise<void> {
+		const metadata = this.metadata!;
+
+		const decoderConfig = await this.demuxer!.getDecoderConfig("video");
+		const codec = metadata.codec.toLowerCase();
+		const shouldPreferSoftwareDecode =
+			forceSoftware || codec.includes("av01") || codec.includes("av1");
 		const effectiveVideoDuration = getEffectiveVideoStreamDurationSeconds({
-			duration: this.metadata.duration,
-			streamDuration: this.metadata.streamDuration,
+			duration: metadata.duration,
+			streamDuration: metadata.streamDuration,
 		});
 		const segments = this.splitBySpeed(
 			this.computeSegments(effectiveVideoDuration, trimRegions),
@@ -266,12 +289,25 @@ export class StreamingVideoDecoder {
 		let frameResolve: ((frame: VideoFrame | null) => void) | null = null;
 		let decodeError: Error | null = null;
 		let decodeDone = false;
+		let stopped = false;
 		let firstDecodedFrameTimestampUs: number | null = null;
 		let decodedFrameTimelineOffsetUs = 0;
+		let chunkIndex = -1;
+		let lastChunk: EncodedVideoChunk | undefined;
+		const preferredDecoderConfig = shouldPreferSoftwareDecode
+			? { ...decoderConfig, hardwareAcceleration: "prefer-software" as const }
+			: decoderConfig;
+		const failureContext = () => ({
+			decoderConfig: preferredDecoderConfig,
+			chunkIndex,
+			chunk: lastChunk,
+			decoderState: decoder.state,
+		});
 
-		this.decoder = new VideoDecoder({
+		const decoder = new VideoDecoder({
 			output: (frame: VideoFrame) => {
-				if (frameResolve) {
+				if (stopped || this.cancelled || decodeError) frame.close();
+				else if (frameResolve) {
 					const resolve = frameResolve;
 					frameResolve = null;
 					resolve(frame);
@@ -281,7 +317,7 @@ export class StreamingVideoDecoder {
 				notifyBackpressureProgress();
 			},
 			error: (e: DOMException) => {
-				decodeError = new Error(`VideoDecoder error: ${e.message}`);
+				decodeError ??= new VideoDecodeFailure(e, failureContext());
 				if (frameResolve) {
 					const resolve = frameResolve;
 					frameResolve = null;
@@ -290,22 +326,21 @@ export class StreamingVideoDecoder {
 				notifyBackpressureProgress();
 			},
 		});
-		this.decoder.ondequeue = notifyBackpressureProgress;
-		const preferredDecoderConfig = shouldPreferSoftwareDecode
-			? {
-					...decoderConfig,
-					hardwareAcceleration: "prefer-software" as const,
-				}
-			: decoderConfig;
+		this.decoder = decoder;
+		decoder.ondequeue = notifyBackpressureProgress;
 
 		try {
-			this.decoder.configure(preferredDecoderConfig);
+			decoder.configure(preferredDecoderConfig);
 		} catch (error) {
-			if (!shouldPreferSoftwareDecode) {
-				throw error;
+			try {
+				if (!shouldPreferSoftwareDecode || forceSoftware) throw error;
+				// AV1 retains its existing default-config fallback if software is unsupported.
+				decoder.configure(decoderConfig);
+			} catch (cause) {
+				if (decoder.state !== "closed") decoder.close();
+				this.decoder = null;
+				throw new VideoDecodeFailure(cause, failureContext(), "configure");
 			}
-			// Fall back to default decoder config if software preference is unsupported.
-			this.decoder.configure(decoderConfig);
 		}
 
 		const getNextFrame = (): Promise<VideoFrame | null> => {
@@ -315,7 +350,7 @@ export class StreamingVideoDecoder {
 				notifyBackpressureProgress();
 				return Promise.resolve(frame);
 			}
-			if (decodeDone) return Promise.resolve(null);
+			if (decodeDone || stopped || this.cancelled) return Promise.resolve(null);
 			return new Promise((resolve) => {
 				frameResolve = resolve;
 			});
@@ -325,16 +360,33 @@ export class StreamingVideoDecoder {
 		// Pass explicit range because some containers are truncated when no end is provided.
 		const readEndSec =
 			Math.max(
-				this.metadata.duration + (this.metadata.mediaStartTime ?? 0),
-				(this.metadata.streamDuration ?? this.metadata.duration) +
-					(this.metadata.streamStartTime ?? this.metadata.mediaStartTime ?? 0),
+				metadata.duration + (metadata.mediaStartTime ?? 0),
+				(metadata.streamDuration ?? metadata.duration) +
+					(metadata.streamStartTime ?? metadata.mediaStartTime ?? 0),
 			) + 0.5;
-		const reader = this.demuxer.read("video", 0, readEndSec).getReader();
+		let reader: ReadableStreamDefaultReader<EncodedVideoChunk>;
+		try {
+			reader = this.demuxer!.read("video", 0, readEndSec).getReader();
+		} catch (error) {
+			if (decoder.state !== "closed") decoder.close();
+			this.decoder = null;
+			throw error;
+		}
+		let cancelRead: Promise<void> | null = null;
+		const stop = () => {
+			stopped = true;
+			notifyBackpressureProgress();
+			const resolve = frameResolve;
+			frameResolve = null;
+			resolve?.(null);
+			cancelRead ??= reader.cancel().catch(() => undefined);
+		};
+		this.cancelActiveDecode = stop;
 
 		// Feed chunks to decoder in background with backpressure
 		const feedPromise = (async () => {
 			try {
-				while (!this.cancelled) {
+				while (!stopped && !this.cancelled && !decodeError) {
 					const { done, value: chunk } = await reader.read();
 					if (done || !chunk) break;
 
@@ -356,22 +408,34 @@ export class StreamingVideoDecoder {
 
 					// Backpressure on both decode queue and decoded frame backlog.
 					while (
-						(this.decoder!.decodeQueueSize > decodeQueueLimit ||
+						(decoder.decodeQueueSize > decodeQueueLimit ||
 							pendingFrames.length > pendingFrameLimit) &&
-						!this.cancelled
+						!this.cancelled &&
+						!stopped &&
+						!decodeError
 					) {
 						await waitForBackpressureProgress();
 					}
-					if (this.cancelled) break;
+					if (this.cancelled || stopped || decodeError) break;
 
-					this.decoder!.decode(chunk);
+					chunkIndex++;
+					lastChunk = chunk;
+					try {
+						decoder.decode(chunk);
+					} catch (error) {
+						throw new VideoDecodeFailure(error, failureContext());
+					}
 				}
 
-				if (!this.cancelled && this.decoder!.state === "configured") {
-					await this.decoder!.flush();
+				if (!stopped && !decodeError && !this.cancelled && decoder.state === "configured") {
+					try {
+						await decoder.flush();
+					} catch (error) {
+						throw new VideoDecodeFailure(error, failureContext());
+					}
 				}
 			} catch (e) {
-				decodeError = e instanceof Error ? e : new Error(String(e));
+				if (!stopped) decodeError ??= e instanceof Error ? e : new Error(String(e));
 			} finally {
 				decodeDone = true;
 				if (frameResolve) {
@@ -388,6 +452,7 @@ export class StreamingVideoDecoder {
 		let segmentFrameIndex = 0;
 		let lastDecodedFrameSec: number | null = null;
 		let heldFrame: VideoFrame | null = null;
+		let inFlightFrame: VideoFrame | null = null;
 		let heldFrameSec = 0;
 
 		const emitHeldFrameForTarget = async (segment: {
@@ -395,6 +460,7 @@ export class StreamingVideoDecoder {
 			endSec: number;
 			speed: number;
 		}) => {
+			if (decodeError) throw decodeError;
 			if (!heldFrame) return false;
 			const segmentFrameCount = segmentOutputFrameCounts[segmentIdx];
 			if (segmentFrameIndex >= segmentFrameCount) return false;
@@ -416,164 +482,185 @@ export class StreamingVideoDecoder {
 			return true;
 		};
 
-		while (!this.cancelled && segmentIdx < segments.length) {
-			const frame = await getNextFrame();
-			if (!frame) break;
-
-			if (firstDecodedFrameTimestampUs === null) {
-				firstDecodedFrameTimestampUs = frame.timestamp;
-				decodedFrameTimelineOffsetUs = getDecodedFrameTimelineOffsetUs(
-					firstDecodedFrameTimestampUs,
-					this.metadata,
-				);
-			}
-
-			const normalizedFrameTimeSec = Math.max(
-				0,
-				(frame.timestamp - firstDecodedFrameTimestampUs + decodedFrameTimelineOffsetUs) /
-					1_000_000,
-			);
-			const frameTimeSec: number =
-				lastDecodedFrameSec === null
-					? normalizedFrameTimeSec
-					: Math.max(lastDecodedFrameSec, normalizedFrameTimeSec);
-			lastDecodedFrameSec = frameTimeSec;
-
-			// Finalize completed segments before handling this frame.
-			while (
-				segmentIdx < segments.length &&
-				frameTimeSec >= segments[segmentIdx].endSec - epsilonSec
-			) {
-				const segment = segments[segmentIdx];
-				while (!this.cancelled && (await emitHeldFrameForTarget(segment))) {
-					// Keep emitting remaining output frames for this segment from the last known frame.
-				}
-
-				segmentIdx++;
-				segmentFrameIndex = 0;
-				if (
-					heldFrame &&
-					segmentIdx < segments.length &&
-					heldFrameSec < segments[segmentIdx].startSec - epsilonSec
-				) {
-					heldFrame.close();
-					heldFrame = null;
-				}
-			}
-
-			if (segmentIdx >= segments.length) {
-				frame.close();
-				continue;
-			}
-
-			const currentSegment = segments[segmentIdx];
-
-			// Before current segment (trimmed region or pre-roll).
-			if (frameTimeSec < currentSegment.startSec - epsilonSec) {
-				frame.close();
-				continue;
-			}
-
-			if (!heldFrame) {
-				heldFrame = frame;
-				heldFrameSec = frameTimeSec;
-				continue;
-			}
-
-			// Any target timestamp before this midpoint is closer to heldFrame than current frame.
-			const handoffBoundarySec = (heldFrameSec + frameTimeSec) / 2;
-			while (!this.cancelled) {
-				const segmentFrameCount = segmentOutputFrameCounts[segmentIdx];
-				if (segmentFrameIndex >= segmentFrameCount) {
-					break;
-				}
-
-				const segmentDurationSec = currentSegment.endSec - currentSegment.startSec;
-				const sourceTimeSec =
-					currentSegment.startSec +
-					(segmentFrameIndex / segmentFrameCount) * segmentDurationSec;
-				if (sourceTimeSec >= currentSegment.endSec - epsilonSec) {
-					break;
-				}
-				if (sourceTimeSec > handoffBoundarySec) {
-					break;
-				}
-
-				const sourceTimestampMs = sourceTimeSec * 1000;
-				await onFrame(
-					heldFrame,
-					exportFrameIndex * frameDurationUs,
-					sourceTimestampMs,
-					sourceTimestampMs,
-				);
-				segmentFrameIndex++;
-				exportFrameIndex++;
-			}
-
-			heldFrame.close();
-			heldFrame = frame;
-			heldFrameSec = frameTimeSec;
-		}
-
-		// Flush remaining output frames for the last decoded frame.
-		if (heldFrame && segmentIdx < segments.length) {
-			while (!this.cancelled && segmentIdx < segments.length) {
-				const segment = segments[segmentIdx];
-				if (heldFrameSec < segment.startSec - epsilonSec) {
-					break;
-				}
-
-				while (!this.cancelled && (await emitHeldFrameForTarget(segment))) {
-					// Keep emitting output frames for the active segment.
-				}
-
-				segmentIdx++;
-				segmentFrameIndex = 0;
-				if (
-					segmentIdx < segments.length &&
-					heldFrameSec < segments[segmentIdx].startSec - epsilonSec
-				) {
-					break;
-				}
-			}
-			heldFrame.close();
-			heldFrame = null;
-		} else if (heldFrame) {
-			heldFrame.close();
-			heldFrame = null;
-		}
-
-		// Drain leftover decoded frames
-		while (!decodeDone) {
-			const frame = await getNextFrame();
-			if (!frame) break;
-			frame.close();
-		}
-
 		try {
-			reader.cancel();
-		} catch {
-			/* already closed */
-		}
-		await feedPromise;
-		for (const f of pendingFrames) f.close();
-		pendingFrames.length = 0;
+			while (!this.cancelled && segmentIdx < segments.length) {
+				inFlightFrame = await getNextFrame();
+				if (decodeError) throw decodeError;
+				const frame = inFlightFrame;
+				if (!frame) break;
 
-		if (this.decoder?.state === "configured") {
-			this.decoder.close();
-		}
-		this.decoder = null;
+				if (firstDecodedFrameTimestampUs === null) {
+					firstDecodedFrameTimestampUs = frame.timestamp;
+					decodedFrameTimelineOffsetUs = getDecodedFrameTimelineOffsetUs(
+						firstDecodedFrameTimestampUs,
+						metadata,
+					);
+				}
 
-		const requiredEndSec = segments.length > 0 ? segments[segments.length - 1].endSec : 0;
-		if (
-			!this.cancelled &&
-			lastDecodedFrameSec !== null &&
-			requiredEndSec - lastDecodedFrameSec > 1 &&
-			exportFrameIndex < expectedOutputFrames
-		) {
-			throw new Error(
-				`Video decode ended early at ${lastDecodedFrameSec.toFixed(3)}s (needed ${requiredEndSec.toFixed(3)}s; rendered ${exportFrameIndex}/${expectedOutputFrames} frames).`,
-			);
+				const normalizedFrameTimeSec = Math.max(
+					0,
+					(frame.timestamp -
+						firstDecodedFrameTimestampUs +
+						decodedFrameTimelineOffsetUs) /
+						1_000_000,
+				);
+				const frameTimeSec: number =
+					lastDecodedFrameSec === null
+						? normalizedFrameTimeSec
+						: Math.max(lastDecodedFrameSec, normalizedFrameTimeSec);
+				lastDecodedFrameSec = frameTimeSec;
+
+				// Finalize completed segments before handling this frame.
+				while (
+					segmentIdx < segments.length &&
+					frameTimeSec >= segments[segmentIdx].endSec - epsilonSec
+				) {
+					const segment = segments[segmentIdx];
+					while (!this.cancelled && (await emitHeldFrameForTarget(segment))) {
+						// Keep emitting remaining output frames for this segment from the last known frame.
+					}
+
+					segmentIdx++;
+					segmentFrameIndex = 0;
+					if (
+						heldFrame &&
+						segmentIdx < segments.length &&
+						heldFrameSec < segments[segmentIdx].startSec - epsilonSec
+					) {
+						heldFrame.close();
+						heldFrame = null;
+					}
+				}
+
+				if (segmentIdx >= segments.length) {
+					frame.close();
+					inFlightFrame = null;
+					continue;
+				}
+
+				const currentSegment = segments[segmentIdx];
+
+				// Before current segment (trimmed region or pre-roll).
+				if (frameTimeSec < currentSegment.startSec - epsilonSec) {
+					frame.close();
+					inFlightFrame = null;
+					continue;
+				}
+
+				if (!heldFrame) {
+					heldFrame = frame;
+					inFlightFrame = null;
+					heldFrameSec = frameTimeSec;
+					continue;
+				}
+
+				// Any target timestamp before this midpoint is closer to heldFrame than current frame.
+				const handoffBoundarySec = (heldFrameSec + frameTimeSec) / 2;
+				while (!this.cancelled) {
+					if (decodeError) throw decodeError;
+					const segmentFrameCount = segmentOutputFrameCounts[segmentIdx];
+					if (segmentFrameIndex >= segmentFrameCount) {
+						break;
+					}
+
+					const segmentDurationSec = currentSegment.endSec - currentSegment.startSec;
+					const sourceTimeSec =
+						currentSegment.startSec +
+						(segmentFrameIndex / segmentFrameCount) * segmentDurationSec;
+					if (sourceTimeSec >= currentSegment.endSec - epsilonSec) {
+						break;
+					}
+					if (sourceTimeSec > handoffBoundarySec) {
+						break;
+					}
+
+					const sourceTimestampMs = sourceTimeSec * 1000;
+					await onFrame(
+						heldFrame,
+						exportFrameIndex * frameDurationUs,
+						sourceTimestampMs,
+						sourceTimestampMs,
+					);
+					segmentFrameIndex++;
+					exportFrameIndex++;
+				}
+
+				heldFrame.close();
+				heldFrame = frame;
+				inFlightFrame = null;
+				heldFrameSec = frameTimeSec;
+			}
+
+			// Flush remaining output frames for the last decoded frame.
+			if (heldFrame && segmentIdx < segments.length) {
+				while (!this.cancelled && segmentIdx < segments.length) {
+					const segment = segments[segmentIdx];
+					if (heldFrameSec < segment.startSec - epsilonSec) {
+						break;
+					}
+
+					while (!this.cancelled && (await emitHeldFrameForTarget(segment))) {
+						// Keep emitting output frames for the active segment.
+					}
+
+					segmentIdx++;
+					segmentFrameIndex = 0;
+					if (
+						segmentIdx < segments.length &&
+						heldFrameSec < segments[segmentIdx].startSec - epsilonSec
+					) {
+						break;
+					}
+				}
+				heldFrame.close();
+				heldFrame = null;
+			} else if (heldFrame) {
+				heldFrame.close();
+				heldFrame = null;
+			}
+
+			// Drain leftover decoded frames
+			while (!decodeDone) {
+				inFlightFrame = await getNextFrame();
+				if (decodeError) throw decodeError;
+				if (!inFlightFrame) break;
+				inFlightFrame.close();
+				inFlightFrame = null;
+			}
+			if (decodeError) throw decodeError;
+			if (!this.cancelled && expectedOutputFrames > 0 && lastDecodedFrameSec === null) {
+				throw new VideoDecodeFailure(
+					new Error("Video decode produced no frames for the requested output"),
+					failureContext(),
+				);
+			}
+
+			const requiredEndSec = segments.length > 0 ? segments[segments.length - 1].endSec : 0;
+			if (
+				!this.cancelled &&
+				lastDecodedFrameSec !== null &&
+				requiredEndSec - lastDecodedFrameSec > 1 &&
+				exportFrameIndex < expectedOutputFrames
+			) {
+				throw new VideoDecodeFailure(
+					new Error(
+						`Video decode ended early at ${lastDecodedFrameSec.toFixed(3)}s (needed ${requiredEndSec.toFixed(3)}s; rendered ${exportFrameIndex}/${expectedOutputFrames} frames).`,
+					),
+					failureContext(),
+				);
+			}
+		} finally {
+			stop();
+			heldFrame?.close();
+			inFlightFrame?.close();
+			for (const frame of pendingFrames) frame.close();
+			pendingFrames.length = 0;
+			if (decoder.state !== "closed") decoder.close();
+			decoder.ondequeue = null;
+			await cancelRead;
+			await feedPromise;
+			if (this.decoder === decoder) this.decoder = null;
+			if (this.cancelActiveDecode === stop) this.cancelActiveDecode = null;
 		}
 	}
 
@@ -582,6 +669,7 @@ export class StreamingVideoDecoder {
 		frameRate: number,
 		clips: ClipRegion[],
 		onFrame: OnFrameCallback,
+		forceSoftware: boolean,
 	): Promise<void> {
 		const slices = buildClipTimelineSlices(clips);
 		const count = Math.ceil(((slices[slices.length - 1]?.outputEndMs ?? 0) / 1000) * frameRate);
@@ -594,7 +682,10 @@ export class StreamingVideoDecoder {
 				if (!session || target.sourceTimestampMs < lastSourceMs) {
 					await session?.close();
 					if (this.cancelled) break;
-					session = await this.startClipDecodeSession(target.sourceTimestampMs / 1000);
+					session = await this.startClipDecodeSession(
+						target.sourceTimestampMs / 1000,
+						forceSoftware,
+					);
 				}
 				lastSourceMs = target.sourceTimestampMs;
 				const frame = await session.frameAt(target.sourceTimestampMs / 1000);
@@ -613,9 +704,15 @@ export class StreamingVideoDecoder {
 		}
 	}
 
-	private async startClipDecodeSession(startSec: number) {
+	private async startClipDecodeSession(startSec: number, forceSoftware: boolean) {
 		const metadata = this.metadata!;
 		const config = await this.demuxer!.getDecoderConfig("video");
+		const software = forceSoftware || /av01|av1/.test(metadata.codec.toLowerCase());
+		const preferredConfig = software
+			? { ...config, hardwareAcceleration: "prefer-software" as const }
+			: config;
+		let chunkIndex = -1;
+		let lastChunk: EncodedVideoChunk | undefined;
 		const pending = this.pendingFrames;
 		let held: VideoFrame | null = null;
 		let heldSec = 0;
@@ -636,9 +733,15 @@ export class StreamingVideoDecoder {
 			for (const resolve of capacityWaiters) resolve();
 			capacityWaiters.clear();
 		};
+		const failureContext = () => ({
+			decoderConfig: preferredConfig,
+			chunkIndex,
+			chunk: lastChunk,
+			decoderState: decoder.state,
+		});
 		const decoder = new VideoDecoder({
 			output: (frame) => {
-				if (stopped || this.cancelled) frame.close();
+				if (stopped || this.cancelled || error) frame.close();
 				else if (frameWaiter) {
 					const resolve = frameWaiter;
 					frameWaiter = null;
@@ -647,7 +750,7 @@ export class StreamingVideoDecoder {
 				notify();
 			},
 			error: (cause) => {
-				error = new Error(`VideoDecoder error: ${cause.message}`);
+				error ??= new VideoDecodeFailure(cause, failureContext());
 				finishWaiting();
 				notify();
 			},
@@ -655,19 +758,16 @@ export class StreamingVideoDecoder {
 		decoder.ondequeue = notify;
 		this.decoder = decoder;
 		try {
-			const software = /av01|av1/.test(metadata.codec.toLowerCase());
 			try {
-				decoder.configure(
-					software ? { ...config, hardwareAcceleration: "prefer-software" } : config,
-				);
+				decoder.configure(preferredConfig);
 			} catch (cause) {
-				if (!software) throw cause;
+				if (!software || forceSoftware) throw cause;
 				decoder.configure(config);
 			}
 		} catch (cause) {
-			decoder.close();
+			if (decoder.state !== "closed") decoder.close();
 			this.decoder = null;
-			throw cause;
+			throw new VideoDecodeFailure(cause, failureContext(), "configure");
 		}
 		const endSec =
 			Math.max(
@@ -697,7 +797,7 @@ export class StreamingVideoDecoder {
 				// A reader that has already ended needs no further cancellation.
 			});
 		};
-		this.cancelClipDecode = stop;
+		this.cancelActiveDecode = stop;
 		const feed = (async () => {
 			try {
 				while (!stopped && !this.cancelled && !error) {
@@ -713,12 +813,23 @@ export class StreamingVideoDecoder {
 						await new Promise<void>((resolve) => capacityWaiters.add(resolve));
 					}
 					if (stopped || this.cancelled || error) break;
-					decoder.decode(value);
+					chunkIndex++;
+					lastChunk = value;
+					try {
+						decoder.decode(value);
+					} catch (cause) {
+						throw new VideoDecodeFailure(cause, failureContext());
+					}
 				}
-				if (!stopped && !this.cancelled && !error && decoder.state === "configured")
-					await decoder.flush();
+				if (!stopped && !this.cancelled && !error && decoder.state === "configured") {
+					try {
+						await decoder.flush();
+					} catch (cause) {
+						throw new VideoDecodeFailure(cause, failureContext());
+					}
+				}
 			} catch (cause) {
-				if (!stopped) error = cause instanceof Error ? cause : new Error(String(cause));
+				if (!stopped) error ??= cause instanceof Error ? cause : new Error(String(cause));
 			} finally {
 				done = true;
 				finishWaiting();
@@ -760,8 +871,11 @@ export class StreamingVideoDecoder {
 					lookahead ??= await next();
 					if (!lookahead) {
 						if (targetSec - heldSec > 1)
-							throw new Error(
-								`Video decode ended early at ${heldSec.toFixed(3)}s (needed ${targetSec.toFixed(3)}s).`,
+							throw new VideoDecodeFailure(
+								new Error(
+									`Video decode ended early at ${heldSec.toFixed(3)}s (needed ${targetSec.toFixed(3)}s).`,
+								),
+								failureContext(),
 							);
 						return held;
 					}
@@ -785,10 +899,11 @@ export class StreamingVideoDecoder {
 				for (const frame of pending) frame.close();
 				pending.length = 0;
 				if (decoder.state !== "closed") decoder.close();
+				decoder.ondequeue = null;
 				await cancelRead;
 				await feed;
 				if (this.decoder === decoder) this.decoder = null;
-				if (this.cancelClipDecode === stop) this.cancelClipDecode = null;
+				if (this.cancelActiveDecode === stop) this.cancelActiveDecode = null;
 			},
 		};
 	}
@@ -888,7 +1003,7 @@ export class StreamingVideoDecoder {
 
 	cancel(): void {
 		this.cancelled = true;
-		this.cancelClipDecode?.();
+		this.cancelActiveDecode?.();
 	}
 
 	getDemuxer() {
@@ -897,7 +1012,7 @@ export class StreamingVideoDecoder {
 
 	destroy(): void {
 		this.cancelled = true;
-		this.cancelClipDecode?.();
+		this.cancelActiveDecode?.();
 
 		if (this.decoder) {
 			try {

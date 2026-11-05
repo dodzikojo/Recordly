@@ -5,6 +5,7 @@
  * Add --verify-project <path> to export a temporary snapshot at 640x360/24fps.
  * Add --repeat 3 to exercise asynchronous decoder cleanup across repeated jobs.
  * Add --4k for 4K frame uploads, or --only legacy/modern/gif for one pipeline.
+ * Add --recover to inject a decoder failure after committed output and verify software replay.
  */
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
@@ -23,6 +24,7 @@ const dimensions = process.argv.includes("--4k")
 	: { width: 640, height: 360 };
 const onlyIndex = process.argv.indexOf("--only");
 const only = onlyIndex < 0 ? null : process.argv[onlyIndex + 1];
+const recover = process.argv.includes("--recover");
 assert.ok(
 	only === null || ["legacy", "modern", "gif"].includes(only),
 	"--only must be legacy, modern or gif",
@@ -144,14 +146,17 @@ function probe(file) {
 	return metadata;
 }
 
-function verifyExport(file, frameCount, audio) {
+function verifyExport(file, frameCount, audio, duration = 6, checkReuse = true) {
 	const metadata = probe(file);
 	const video = metadata.streams.find((stream) => stream.codec_type === "video");
 	assert.equal(Number(video.nb_read_frames), frameCount, JSON.stringify(metadata));
-	assert.ok(Math.abs(Number(metadata.format.duration) - 6) < 0.05, JSON.stringify(metadata));
+	assert.ok(
+		Math.abs(Number(metadata.format.duration) - duration) < 0.05,
+		JSON.stringify(metadata),
+	);
 	const pixels = runFfmpeg([
 		"-ss",
-		"5.8",
+		String(duration - 0.2),
 		"-i",
 		file,
 		"-frames:v",
@@ -191,7 +196,11 @@ function verifyExport(file, frameCount, audio) {
 	let error = 0;
 	for (let index = 0; index < first.length; index++)
 		error += Math.abs(first[index] - repeated[index]);
-	assert.ok(error / first.length < 4, "Reused source footage must appear twice, in clip order");
+	if (checkReuse)
+		assert.ok(
+			error / first.length < 4,
+			"Reused source footage must appear twice, in clip order",
+		);
 	// A large solid marker survives GIF quantization and resampling of the 4K test pattern.
 	// Repeated background-only frames must not pass just because their hashes agree.
 	const marker = runFfmpeg([
@@ -217,10 +226,10 @@ function verifyExport(file, frameCount, audio) {
 	);
 	if (audio) {
 		const sound = metadata.streams.find((stream) => stream.codec_type === "audio");
-		assert.ok(sound && Number(sound.duration) >= 5.95, JSON.stringify(metadata));
+		assert.ok(sound && Number(sound.duration) >= duration - 0.05, JSON.stringify(metadata));
 		const pcm = runFfmpeg([
 			"-ss",
-			"5.65",
+			String(duration - 0.35),
 			"-i",
 			file,
 			"-t",
@@ -366,6 +375,7 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 				repeat,
 				dimensions,
 				only,
+				recover,
 			}) => {
 				const base64 = (buffer) => {
 					const bytes = new Uint8Array(buffer);
@@ -395,6 +405,9 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 				);
 				const { VideoExporter } = await import("/src/lib/exporter/videoExporter.ts");
 				const { GifExporter } = await import("/src/lib/exporter/gifExporter.ts");
+				const { StreamingVideoDecoder } = await import(
+					"/src/lib/exporter/streamingDecoder.ts"
+				);
 				const config = {
 					videoUrl: sourcePath,
 					width: dimensions.width,
@@ -436,6 +449,21 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 						},
 					],
 					["legacy.mp4", VideoExporter, {}],
+					...(recover
+						? [
+								[
+									"source-clock.mp4",
+									ModernVideoExporter,
+									{
+										clipRegions: undefined,
+										audioRegions: [],
+										sourceAudioTrackSettings: {
+											mixed: { volume: 0.7, normalize: false },
+										},
+									},
+								],
+							]
+						: []),
 					[
 						"timeline.gif",
 						GifExporter,
@@ -447,6 +475,7 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 						.filter(
 							([name]) =>
 								!only ||
+								(recover && only === "modern" && name === "source-clock.mp4") ||
 								(only === "gif" ? name.endsWith(".gif") : name === only + ".mp4"),
 						)
 						.map(([name, Exporter, extra]) => [
@@ -456,6 +485,66 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 						]),
 				).flat()) {
 					console.info("[export-smoke] Starting " + name);
+					const nativeDecoder = window.VideoDecoder;
+					const originalDecodeAll = StreamingVideoDecoder.prototype.decodeAll;
+					const timestamps = [];
+					let injected = false;
+					let committedBeforeFailure = 0;
+					let softwareConfigurations = 0;
+					if (recover) {
+						StreamingVideoDecoder.prototype.decodeAll = function (
+							fps,
+							trims,
+							speeds,
+							callback,
+							clips,
+						) {
+							return originalDecodeAll.call(
+								this,
+								fps,
+								trims,
+								speeds,
+								async (...args) => {
+									await callback(...args);
+									timestamps.push(args[1]);
+								},
+								clips,
+							);
+						};
+						window.VideoDecoder = class extends nativeDecoder {
+							constructor(callbacks) {
+								super(callbacks);
+								this.reportError = callbacks.error;
+							}
+							configure(config) {
+								this.software = config.hardwareAcceleration === "prefer-software";
+								if (this.software) softwareConfigurations++;
+								super.configure(config);
+							}
+							decode(chunk) {
+								if (
+									!injected &&
+									!this.software &&
+									timestamps.length > 3 &&
+									chunk.timestamp >= 2_000_000
+								) {
+									injected = true;
+									committedBeforeFailure = timestamps.length;
+									this.close();
+									queueMicrotask(() =>
+										this.reportError(
+											new DOMException(
+												"Injected hardware decoder failure",
+												"EncodingError",
+											),
+										),
+									);
+									return;
+								}
+								super.decode(chunk);
+							}
+						};
+					}
 					const exporter = new Exporter({ ...config, ...extra });
 					let timeout;
 					let result;
@@ -471,8 +560,44 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 						]);
 					} finally {
 						clearTimeout(timeout);
+						window.VideoDecoder = nativeDecoder;
+						StreamingVideoDecoder.prototype.decodeAll = originalDecodeAll;
 					}
 					if (!result.success) throw new Error(name + ": " + result.error);
+					if (recover) {
+						const expected = name.endsWith("gif")
+							? 60
+							: name.endsWith("source-clock.mp4")
+								? 150
+								: 180;
+						if (
+							!injected ||
+							!softwareConfigurations ||
+							committedBeforeFailure <= 3 ||
+							timestamps.length !== expected ||
+							new Set(timestamps).size !== expected
+						)
+							throw new Error(
+								name +
+									" did not exercise one complete, nonduplicated software replay: " +
+									JSON.stringify({
+										injected,
+										softwareConfigurations,
+										committedBeforeFailure,
+										frames: timestamps.length,
+									}),
+							);
+						console.info(
+							"[export-smoke] PASS decoder recovery " +
+								name +
+								" " +
+								JSON.stringify({
+									committedBeforeFailure,
+									softwareConfigurations,
+									frames: timestamps.length,
+								}),
+						);
+					}
 					const file =
 						result.tempFilePath ||
 						(await window.smokeWriteExport({
@@ -483,15 +608,32 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});`,
 				}
 				return results;
 			},
-			{ sourcePath, audioPath, clips, trims, speeds, narration, repeat, dimensions, only },
+			{
+				sourcePath,
+				audioPath,
+				clips,
+				trims,
+				speeds,
+				narration,
+				repeat,
+				dimensions,
+				only,
+				recover,
+			},
 		);
 		for (const result of exports) {
 			const target = path.join(profile, result.name);
 			if (result.file !== target) fs.copyFileSync(result.file, target);
 			verifyExport(
 				target,
-				result.name.endsWith("gif") ? 60 : 180,
+				result.name.endsWith("gif")
+					? 60
+					: result.name.endsWith("source-clock.mp4")
+						? 150
+						: 180,
 				!result.name.endsWith("gif"),
+				result.name.endsWith("source-clock.mp4") ? 5 : 6,
+				!result.name.endsWith("source-clock.mp4"),
 			);
 			console.log("Export metrics", result.name, result.metrics);
 		}
