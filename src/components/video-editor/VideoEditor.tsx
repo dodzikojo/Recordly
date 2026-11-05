@@ -449,6 +449,7 @@ export default function VideoEditor() {
 	const [videoPath, setVideoPath] = useState<string | null>(null);
 	const [videoSourcePath, setVideoSourcePath] = useState<string | null>(null);
 	const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null);
+	const [timelineViewVersion, setTimelineViewVersion] = useState(0);
 	const [projectLibraryEntries, setProjectLibraryEntries] = useState<ProjectLibraryEntry[]>([]);
 	const [projectBrowserOpen, setProjectBrowserOpen] = useState(false);
 	const [isEditingProjectName, setIsEditingProjectName] = useState(false);
@@ -2241,6 +2242,7 @@ export default function VideoEditor() {
 			setZoomRegions(normalizedEditor.zoomRegions);
 			setTrimRegions(normalizedEditor.trimRegions);
 			setClipRegions(normalizedEditor.clipRegions);
+			setTimelineViewVersion((version) => version + 1);
 			clipInitializedRef.current = normalizedEditor.clipRegions.length > 0;
 			autoFullTrackClipIdRef.current = null;
 			autoFullTrackClipEndMsRef.current = null;
@@ -7291,6 +7293,7 @@ export default function VideoEditor() {
 					<TimelineEditor
 						ref={timelineRef}
 						videoDuration={timelineDuration}
+						viewResetKey={`${timelineViewVersion}:${videoSourcePath ?? videoPath ?? ""}`}
 						currentTime={currentTime}
 						playheadTime={timelinePlayheadTime}
 						onSeek={handleTimelineSeek}

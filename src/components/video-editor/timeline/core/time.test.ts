@@ -3,6 +3,7 @@ import {
 	calculateAxisScale,
 	calculateTimelineScale,
 	createInitialRange,
+	getTimelineContentEndMs,
 	formatPlayheadTime,
 	formatTimeLabel,
 	normalizeWheelDeltaToPixels,
@@ -13,6 +14,36 @@ describe("timeline core/time", () => {
 		expect(createInitialRange(0)).toEqual({ start: 0, end: 1000 });
 		expect(createInitialRange(-10)).toEqual({ start: 0, end: 1000 });
 		expect(createInitialRange(2500)).toEqual({ start: 0, end: 2500 });
+	});
+
+	it("fits the opening view to a short edit of a long recording", () => {
+		const end = getTimelineContentEndMs([{ endMs: 12_000 }, { endMs: 36_796 }], 1_064_618);
+		expect(createInitialRange(1_064_618, end)).toEqual({ start: 0, end: 36_796 });
+	});
+
+	it("includes trailing audio/effects and preserves gaps rather than summing clip lengths", () => {
+		expect(
+			getTimelineContentEndMs(
+				[{ endMs: 10_000 }, { endMs: 25_000 }, { endMs: 40_000 }],
+				60_000,
+			),
+		).toBe(40_000);
+	});
+
+	it("keeps the full recording view when there are no timed items", () => {
+		expect(getTimelineContentEndMs([], 60_000)).toBe(60_000);
+		expect(createInitialRange(60_000, 60_000)).toEqual({ start: 0, end: 60_000 });
+	});
+
+	it("ignores invalid item endpoints and keeps the view inside timeline bounds", () => {
+		expect(
+			getTimelineContentEndMs(
+				[{ endMs: NaN }, { endMs: Infinity }, { endMs: -1 }, { endMs: 12_000 }],
+				60_000,
+			),
+		).toBe(12_000);
+		expect(getTimelineContentEndMs([{ endMs: 90_000 }], 60_000)).toBe(60_000);
+		expect(getTimelineContentEndMs([{ endMs: NaN }], 60_000)).toBe(60_000);
 	});
 
 	it("computes scale defaults and caps", () => {

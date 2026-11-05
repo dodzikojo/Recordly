@@ -64,9 +64,20 @@ export function calculateTimelineScale(durationSeconds: number): TimelineScaleCo
 	};
 }
 
-export function createInitialRange(totalMs: number): Range {
+export function getTimelineContentEndMs(
+	regions: ReadonlyArray<{ endMs: number }>,
+	totalMs: number,
+): number {
+	const contentEnd = regions.reduce(
+		(end, region) => (Number.isFinite(region.endMs) ? Math.max(end, region.endMs) : end),
+		0,
+	);
+	return Math.min(Math.max(0, totalMs), contentEnd > 0 ? contentEnd : Math.max(0, totalMs));
+}
+
+export function createInitialRange(totalMs: number, contentEndMs = totalMs): Range {
 	if (totalMs > 0) {
-		return { start: 0, end: totalMs };
+		return { start: 0, end: Math.min(totalMs, contentEndMs > 0 ? contentEndMs : totalMs) };
 	}
 
 	return { start: 0, end: FALLBACK_RANGE_MS };

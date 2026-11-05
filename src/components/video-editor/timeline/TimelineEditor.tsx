@@ -24,7 +24,7 @@ import type {
 import KeyframeMarkers from "./components/markers/KeyframeMarkers";
 import TimelineCanvas from "./components/viewport/TimelineCanvas";
 import TimelineWrapper from "./components/wrapper/TimelineWrapper";
-import { calculateTimelineScale } from "./core/time";
+import { calculateTimelineScale, getTimelineContentEndMs } from "./core/time";
 import { useTimelineAudioPeaks } from "./hooks/useTimelineAudioPeaks";
 import { useTimelineEditorRuntime } from "./hooks/useTimelineEditorRuntime";
 import { useTimelineRange } from "./hooks/useTimelineRange";
@@ -35,6 +35,7 @@ import {
 
 export interface TimelineEditorProps {
 	videoDuration: number;
+	viewResetKey?: string | null;
 	currentTime: number;
 	playheadTime?: number;
 	onSeek?: (time: number) => void;
@@ -124,6 +125,7 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 	function TimelineEditor(
 		{
 			videoDuration,
+			viewResetKey,
 			currentTime,
 			playheadTime,
 			onSeek,
@@ -206,8 +208,20 @@ const TimelineEditor = forwardRef<TimelineEditorHandle, TimelineEditorProps>(
 
 		const timelineContainerRef = useRef<HTMLDivElement>(null);
 		const isTimelineFocusedRef = useRef(false);
+		const contentEndMs = getTimelineContentEndMs(
+			[
+				...clipRegions,
+				...zoomRegions,
+				...audioRegions,
+				...annotationRegions,
+				...captionRegions,
+			],
+			totalMs,
+		);
 		const { setRange, clampedRange, handleTimelineWheel } = useTimelineRange({
 			totalMs,
+			contentEndMs,
+			viewResetKey: viewResetKey ?? videoSourcePath ?? videoPath,
 			timelineContainerRef,
 		});
 

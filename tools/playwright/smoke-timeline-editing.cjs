@@ -8,6 +8,10 @@ const { _electron: electron } = require("playwright");
 
 const root = path.resolve(__dirname, "../..");
 const phase = process.argv[process.argv.indexOf("--phase") + 1] || "gaps";
+const baselineIndex = process.argv.indexOf("--baseline");
+const baseline = baselineIndex >= 0 ? process.argv[baselineIndex + 1] : null;
+if (baselineIndex >= 0)
+	assert.ok(baseline && !baseline.startsWith("-"), "--baseline requires a git ref");
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "recordly-timeline-smoke-"));
 const projectPath = path.join(profile, "timeline.recordly");
 const sourcePath = path.join(profile, "source.mp4");
@@ -176,6 +180,28 @@ function writeFixture() {
 async function installInspection(page) {
 	await page.addInitScript(() => {
 		window.timelineSmoke = {
+			view() {
+				const rootNode = document.getElementById("root");
+				const key = Object.keys(rootNode).find((k) => k.startsWith("__reactContainer"));
+				const fiber = rootNode[key];
+				const visit = (node) =>
+					node &&
+					(node.memoizedProps?.onRangeChange && node.memoizedProps?.minVisibleRangeMs
+						? node.memoizedProps
+						: visit(node.child) || visit(node.sibling));
+				return visit(fiber.stateNode?.current || fiber.current || fiber);
+			},
+			projects() {
+				const rootNode = document.getElementById("root");
+				const key = Object.keys(rootNode).find((k) => k.startsWith("__reactContainer"));
+				const fiber = rootNode[key];
+				const visit = (node) =>
+					node &&
+					(node.memoizedProps?.onOpenProject && node.memoizedProps?.entries
+						? node.memoizedProps
+						: visit(node.child) || visit(node.sibling));
+				return visit(fiber.stateNode?.current || fiber.current || fiber);
+			},
 			props() {
 				const rootNode = document.getElementById("root");
 				const key = Object.keys(rootNode).find((k) => k.startsWith("__reactContainer"));
@@ -1019,20 +1045,187 @@ async function persistAndReopen(page, expected, savedMatches = () => true) {
 	console.log("PASS project persistence");
 }
 
+async function testFit(page) {
+	const view = () => page.evaluate(() => window.timelineSmoke.view()?.range);
+	await page.waitForFunction(() => Boolean(window.timelineSmoke.view()));
+	assert.deepEqual(await view(), { start: 0, end: 1400 });
+	assert.equal(await page.evaluate(() => window.timelineSmoke.props().videoDuration), 20);
+	const before = await state(page);
+	const scroll = page.locator("[data-timeline-scroll]");
+	const box = await scroll.boundingBox();
+	const lastClip = await clipLocator(page, "clip-d").boundingBox();
+	assert.ok(
+		(lastClip.x + lastClip.width - box.x) / box.width > 0.6,
+		"short edit should fill the opening view",
+	);
+	await scroll.locator("..").screenshot({ path: path.join(profile, "fit-open.png") });
+	console.log(
+		"PASS fitted opening view includes trailing effects and preserves 20s editing bounds",
+	);
+	await page.mouse.move(box.x + box.width / 2, box.y + 15);
+	await page.keyboard.down("Control");
+	await page.mouse.wheel(0, -400);
+	await page.keyboard.up("Control");
+	await page.waitForFunction(() => {
+		const r = window.timelineSmoke.view().range;
+		return r.end - r.start < 1400;
+	});
+	const zoomed = await view();
+	await page.keyboard.down("Shift");
+	await page.mouse.wheel(0, 80);
+	await page.keyboard.up("Shift");
+	await page.waitForFunction(
+		(start) => window.timelineSmoke.view().range.start > start,
+		zoomed.start,
+	);
+	const manual = await view();
+	await page.evaluate(() => {
+		const p = window.timelineSmoke.props();
+		p.onAudioSpanChange("narration", { start: 0, end: 1900 });
+	});
+	await page.waitForFunction(() => window.timelineSmoke.props().audioRegions[0].endMs === 1900);
+	assert.deepEqual(await view(), manual, "edits must preserve manual zoom/pan");
+	assert.deepEqual((await state(page)).clips, before.clips);
+	console.log("PASS manual zoom/pan retained across edits; clip/source timing unchanged", manual);
+	const secondPath = path.join(profile, "same-source.recordly");
+	const second = JSON.parse(fs.readFileSync(projectPath, "utf8"));
+	second.editor.clipRegions = clips.map((clip, index) => ({
+		...clip,
+		startMs: index * 600,
+		endMs: (index + 1) * 600,
+		sourceEndMs: clip.sourceStartMs + 1200,
+		speed: 2,
+	}));
+	second.editor.annotationRegions[0] = {
+		...second.editor.annotationRegions[0],
+		startMs: 2000,
+		endMs: 2400,
+	};
+	fs.writeFileSync(secondPath, JSON.stringify(second));
+	const reopen = async () => {
+		await page.evaluate((p) => window.timelineSmoke.projects().onOpenProject(p), secondPath);
+		await page
+			.getByRole("button", { name: "Discard changes", exact: true })
+			.click({ timeout: 1500 })
+			.catch(() => undefined);
+		await page.waitForFunction(() => window.timelineSmoke.view()?.range.end === 2400);
+	};
+	await reopen();
+	await page.evaluate(() => window.timelineSmoke.view().onRangeChange({ start: 200, end: 800 }));
+	await page.waitForFunction(() => window.timelineSmoke.view().range.start === 200);
+	await reopen();
+	assert.deepEqual(await view(), { start: 0, end: 2400 });
+	console.log("PASS same-source project switch and same-project reopen reset to content fit");
+	const verifyIndex = process.argv.indexOf("--verify-project");
+	if (verifyIndex >= 0) {
+		const project = JSON.parse(fs.readFileSync(process.argv[verifyIndex + 1], "utf8"));
+		const copy = path.join(profile, "fit-project.recordly");
+		fs.writeFileSync(copy, JSON.stringify(project));
+		const opened = await page.evaluate(
+			(p) => window.electronAPI.openProjectFileAtPath(p),
+			copy,
+		);
+		assert.equal(opened.success, true);
+		await page.reload();
+		await page.waitForFunction(
+			(count) =>
+				document.querySelector("video")?.readyState >= 2 &&
+				window.timelineSmoke.props()?.clipRegions.length === count,
+			project.editor.clipRegions.length,
+		);
+		const contentEnd = await page.evaluate(() => {
+			const p = window.timelineSmoke.props();
+			return Math.max(
+				...p.clipRegions.map((r) => r.endMs),
+				...p.zoomRegions.map((r) => r.endMs),
+				...p.audioRegions.map((r) => r.endMs),
+				...p.annotationRegions.map((r) => r.endMs),
+				...p.captionRegions.map((r) => r.endMs),
+			);
+		});
+		await page.waitForFunction(
+			(end) => window.timelineSmoke.view()?.range.end === end,
+			contentEnd,
+		);
+		assert.deepEqual(await view(), { start: 0, end: contentEnd });
+		await page
+			.locator("[data-timeline-scroll]")
+			.locator("..")
+			.screenshot({
+				path: path.join(profile, "fit-project.png"),
+			});
+		console.log("PASS supplied project opens fitted to its edited content", {
+			view: await view(),
+			sourceDuration: await page.evaluate(() => document.querySelector("video").duration),
+			clips: project.editor.clipRegions.length,
+		});
+	}
+}
+
 async function main() {
 	generateMedia();
 	writeFixture();
+	if (phase === "fit") {
+		const fixture = JSON.parse(fs.readFileSync(projectPath, "utf8"));
+		fixture.editor.clipRegions = clips.map((clip, index) => ({
+			...clip,
+			startMs: index * 250,
+			endMs: (index + 1) * 250,
+			sourceEndMs: clip.sourceStartMs + 2500,
+			speed: 10,
+		}));
+		fixture.editor.zoomRegions = [
+			{ ...fixture.editor.zoomRegions[0], startMs: 250, endMs: 500 },
+		];
+		fixture.editor.annotationRegions = [
+			{ ...fixture.editor.annotationRegions[0], startMs: 1000, endMs: 1400 },
+		];
+		fixture.editor.audioRegions = [
+			{ ...fixture.editor.audioRegions[0], startMs: 0, endMs: 1200 },
+		];
+		fs.writeFileSync(projectPath, JSON.stringify(fixture));
+	}
 	const { createServer } = await import("vite");
 	const { default: react } = await import("@vitejs/plugin-react");
 	const server = await createServer({
 		configFile: false,
 		root,
-		plugins: [react()],
+		plugins: [
+			...(baseline
+				? [
+						{
+							name: "timeline-fit-baseline",
+							enforce: "pre",
+							load(id) {
+								if (
+									id.replaceAll("\\", "/") ===
+									path
+										.join(
+											root,
+											"src/components/video-editor/timeline/hooks/useTimelineRange.ts",
+										)
+										.replaceAll("\\", "/")
+								)
+									return execFileSync(
+										"git",
+										[
+											"show",
+											`${baseline}:src/components/video-editor/timeline/hooks/useTimelineRange.ts`,
+										],
+										{ cwd: root, encoding: "utf8" },
+									);
+							},
+						},
+					]
+				: []),
+			react(),
+		],
 		resolve: { alias: { "@": path.join(root, "src") } },
 		server: {
 			host: "127.0.0.1",
 			port: 59000 + Math.floor(Math.random() * 4000),
 			strictPort: true,
+			watch: { ignored: ["**/.tmp/**", "**/*.test.ts", "**/docs/**"] },
 		},
 		cacheDir: path.join(os.tmpdir(), "recordly-timeline-smoke-vite"),
 	});
@@ -1082,6 +1275,7 @@ require(${JSON.stringify(path.join(root, "dist-electron/main.cjs"))});
 		else if (phase === "layout") await testLayout(page, app);
 		else if (phase === "cursor") await testCursorVisibility(page);
 		else if (phase === "audio") await testAudioAccess(page);
+		else if (phase === "fit") await testFit(page);
 		else throw new Error(`Unknown smoke phase: ${phase}`);
 		await page.screenshot({ path: path.join(profile, `${phase}.png`) });
 		console.log(`Timeline ${phase} smoke passed. Artifacts: ${profile}`);

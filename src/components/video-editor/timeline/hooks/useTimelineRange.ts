@@ -1,9 +1,22 @@
 import type { Range } from "dnd-timeline";
-import { useCallback, useEffect, useMemo, useState, type RefObject, type WheelEvent } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type Dispatch,
+	type SetStateAction,
+	type RefObject,
+	type WheelEvent,
+} from "react";
 import { createInitialRange, normalizeWheelDeltaToPixels } from "../core/time";
+import { clampRange } from "../dnd/engine";
 
 interface UseTimelineRangeParams {
 	totalMs: number;
+	contentEndMs?: number;
+	viewResetKey?: string | null;
 	timelineContainerRef: RefObject<HTMLDivElement>;
 }
 
@@ -41,21 +54,43 @@ export function resolveTimelineWheelPanDeltaPx({
 	return 0;
 }
 
-export function useTimelineRange({ totalMs, timelineContainerRef }: UseTimelineRangeParams) {
-	const [range, setRange] = useState<Range>(() => createInitialRange(totalMs));
+export function useTimelineRange({
+	totalMs,
+	contentEndMs = totalMs,
+	viewResetKey,
+	timelineContainerRef,
+}: UseTimelineRangeParams) {
+	const [range, setRangeState] = useState<Range>(() =>
+		clampRange(createInitialRange(totalMs, contentEndMs), { totalMs, minVisibleRangeMs: 300 }),
+	);
+	const manualRangeRef = useRef(false);
+	const previousViewKeyRef = useRef(viewResetKey);
+	const setRange = useCallback<Dispatch<SetStateAction<Range>>>((updater) => {
+		manualRangeRef.current = true;
+		setRangeState(updater);
+	}, []);
 
 	useEffect(() => {
-		setRange(createInitialRange(totalMs));
-	}, [totalMs]);
+		if (previousViewKeyRef.current !== viewResetKey) {
+			previousViewKeyRef.current = viewResetKey;
+			manualRangeRef.current = false;
+		}
+		setRangeState((previous) => {
+			const next = manualRangeRef.current
+				? clampRange(previous, { totalMs, minVisibleRangeMs: 300 })
+				: clampRange(createInitialRange(totalMs, contentEndMs), {
+						totalMs,
+						minVisibleRangeMs: 300,
+					});
+			return previous.start === next.start && previous.end === next.end ? previous : next;
+		});
+	}, [totalMs, contentEndMs, viewResetKey]);
 
 	const clampedRange = useMemo<Range>(() => {
 		if (totalMs === 0) {
 			return range;
 		}
-		return {
-			start: Math.max(0, Math.min(range.start, totalMs)),
-			end: Math.min(range.end, totalMs),
-		};
+		return clampRange(range, { totalMs, minVisibleRangeMs: 300 });
 	}, [range, totalMs]);
 
 	const panTimelineRange = useCallback(
@@ -71,7 +106,7 @@ export function useTimelineRange({ totalMs, timelineContainerRef }: UseTimelineR
 				return { start: nextStart, end: nextStart + visibleSpan };
 			});
 		},
-		[totalMs],
+		[totalMs, setRange],
 	);
 
 	const handleTimelineWheel = useCallback(
