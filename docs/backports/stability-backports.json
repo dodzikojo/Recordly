@@ -1,7 +1,7 @@
 {
 	"updated": "2026-11-05",
-	"status": "first-batch-ready-for-review; decoder-recovery-pending",
-	"authorization": "User authorized stability backports, starting with preview memory cleanup. Keep current UI, no sign-in, and every fork feature. Merging this new batch has not been requested.",
+	"status": "all-selected-backports-implemented; decoder-recovery-pr-ready-for-review",
+	"authorization": "User authorized merging PRs #17, #18 and #19 in order and proceeding with decoder recovery. The first batch is merged; decoder recovery is implemented in PR #20. Merging PR #20 has not been requested. Keep the current UI, no sign-in and every fork feature.",
 	"oursBeforeBackports": "136092637e0f62a2f55ba091e16462b6bd54c2f6",
 	"upstreamInspected": "109ca3a13c362e969d9add25d1f93406c36dba2a",
 	"integrationPolicy": {
@@ -38,7 +38,8 @@
 			"pr": "https://github.com/dodzikojo/Recordly/pull/17",
 			"branch": "codex/backport-preview-memory-cleanup",
 			"base": "main",
-			"merged": false
+			"merged": true,
+			"mergeCommit": "8f00984bcac118711657a7f58b905efaa2389b40"
 		},
 		{
 			"name": "Browser microphone no-AGC default",
@@ -46,8 +47,9 @@
 			"commit": "8ab97d6",
 			"pr": "https://github.com/dodzikojo/Recordly/pull/18",
 			"branch": "codex/backport-browser-mic-no-agc",
-			"base": "codex/backport-preview-memory-cleanup",
-			"merged": false
+			"base": "main",
+			"merged": true,
+			"mergeCommit": "4ae1a6ca2b78a3cf0896d63fec3d2df1741be57a"
 		},
 		{
 			"name": "Vitest 3.2.7 security update",
@@ -55,26 +57,47 @@
 			"commit": "42d643a5",
 			"pr": "https://github.com/dodzikojo/Recordly/pull/19",
 			"branch": "codex/backport-vitest-security-update",
-			"base": "codex/backport-browser-mic-no-agc",
+			"base": "main",
+			"merged": true,
+			"mergeCommit": "e98388a6f9d72bef7db4cf75b37784b0a95944d1"
+		},
+		{
+			"name": "Software decoder recovery",
+			"upstreamPR": 1075,
+			"commit": "27d54aa237daae6ac0cefdef88cf33c394d8e5c5",
+			"pr": "https://github.com/dodzikojo/Recordly/pull/20",
+			"branch": "codex/backport-decoder-recovery",
+			"base": "main",
 			"merged": false
 		}
 	],
 	"validation": {
 		"runtime": "Node 22.23.4, Windows; installs use --ignore-scripts to preserve native helpers.",
-		"unit": "Vitest 3.2.7: 151 files passed; 1409 tests passed, 2 skipped.",
+		"unit": "Vitest 3.2.7: 152 files passed; 1445 tests passed, 2 skipped. 36 new recovery cases across both decoder paths.",
 		"quality": "TypeScript, lint (18 existing warnings), i18n parity, touched-code formatting and whitespace checks pass. Production Vite renderer/Electron build, main CJS smoke, and nine segmentation assets/notices pass.",
 		"preview": "Real isolated Electron editor: 120 radius changes, 20 padding changes, ten 4K/1080p switches, stable listener counts and replaced sources destroyed, playback and backward paused-seek pixels. Screenshot inspected. Same smoke against 13609263 fails source release. No VRAM byte-reduction claim.",
 		"microphone": "Real isolated Electron synthetic microphone: actual AGC=false, echo/noise=true; MediaRecorder audio decodes to 1.56s, RMS 0.0876. Physical affected headset not tested.",
 		"commands": [
 			"node tools/playwright/smoke-preview-memory.cjs",
 			"node tools/playwright/smoke-preview-memory.cjs --baseline 13609263",
-			"node node_modules/vitest/vitest.mjs run --maxWorkers=4 --minWorkers=1"
-		]
+			"node node_modules/vitest/vitest.mjs run --maxWorkers=4 --minWorkers=1",
+			"node tools/playwright/smoke-export-timeline.cjs --recover",
+			"node tools/playwright/smoke-export-timeline.cjs --4k"
+		],
+		"decoderRecovery": "Six real Electron injected-failure MP4/GIF exports pass: modern WebGL/WebGPU, legacy MP4, source audio, legacy source clock and GIF. MP4 faults injected after 22 committed frames, GIF after 8. Output timestamps are unique and encoded ending picture/audio, counts and durations are verified. Controlled codec faults, not an actual reproduced physical driver failure.",
+		"normal4k": "All five normal 4K MP4/GIF regression exports pass. A complete project snapshot also exports through the normal editor flow: 3840x2160, 30fps, 1104 frames, 36.8-second video/audio, inspected source picture throughout, narration correlation 0.9999 and five-second playback with zero dropped frames. Original project/media unchanged."
 	},
 	"next": {
+		"name": "Review and test decoder-recovery PR #20",
+		"status": "implementation complete; awaiting user review/merge request",
+		"branch": "codex/backport-decoder-recovery",
+		"instruction": "Do not merge PR #20 without the user request. Keep main synced to the merged first batch; use the feature branch to test the new recovery."
+	},
+	"mainAfterFirstBatch": "e98388a6f9d72bef7db4cf75b37784b0a95944d1",
+	"decoderRecovery": {
 		"name": "Adapt software decoder recovery (upstream PR #1075)",
-		"status": "not implemented; use a fresh session for this focused exporter slice",
-		"startingPoint": "Confirm current PR/branch state before editing; preserve all three preceding backports. No additional permission needed to implement the authorized stability work.",
+		"status": "implemented and verified; PR #20 open",
+		"startingPoint": "Implemented on e98388a6 after merging the first batch; no remaining implementation for the selected backports.",
 		"source": "git diff 94d2cde3^1 94d2cde3 -- src/lib/exporter/streamingDecodePipeline.ts src/lib/exporter/streamingDecoderSupport.ts src/lib/exporter/streamingDecoder.test.ts",
 		"reasonToAdapt": "Upstream split its decoder and changed the timeline model. Ours retains a legacy streaming path and decodeClipTimeline/startClipDecodeSession for exact ordered/repeated source ranges. Do not transplant upstream's wrapper/decoder wholesale.",
 		"requirements": [
@@ -90,6 +113,14 @@
 			"Full unit suite, TypeScript and targeted lint/format.",
 			"Real Electron MP4 smoke including injected eligible decoder failure, plus normal 4K WebGL/WebGPU/legacy MP4/GIF timeline smoke.",
 			"Keep prior raw-frame ownership, narration, tail-duration and native-export eligibility regressions passing."
-		]
-	}
+		],
+		"commit": "27d54aa237daae6ac0cefdef88cf33c394d8e5c5",
+		"pr": "https://github.com/dodzikojo/Recordly/pull/20",
+		"branch": "codex/backport-decoder-recovery"
+	},
+	"lessons": [
+		"The legacy source-clock regression uses embedded source audio; clip-sequence regressions separately verify independently placed narration. Do not reinterpret legacy source coordinates as edited narration positions when constructing fixtures.",
+		"A decoder can fail before any output and software can produce no frames without raising a codec error. Treat empty output for a nonempty job as a failed recovery.",
+		"Opening a different project replaces the preview video element. Reuse a source for a persistent element; destroy the source when the element is replaced."
+	]
 }

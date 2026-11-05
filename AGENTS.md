@@ -79,6 +79,9 @@ changing product code in response can hide an environmental failure.
   the media URL, so destroying it on layout cleanup interrupts playback.
 - Confirm an audio stream exists before bulk audio decoding a screen recording. A silent
   video can be multi-GB; preserve browser fallback for actual or misidentified audio files.
+- Decoder recovery must replay only tagged decoder failures, skipping callbacks already
+  committed to the compositor. Keep callback/setup failures and cancellation out of replay,
+  and preserve both the clip-sequence and legacy source-clock paths.
 
 ## Project and settings compatibility
 

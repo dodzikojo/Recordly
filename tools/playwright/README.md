@@ -108,6 +108,14 @@ when none is live, and after `timeoutMs` (default 5 s, also used by `status()`/`
 "Recordly's control server isn't responding …" when the server doesn't answer. `start`, `stop`,
 `pause`, `resume` and `cancel` have no timeout (`stop` waits for the editor to save).
 
+## Export decoder recovery smoke
+
+Run `node tools/playwright/smoke-export-timeline.cjs --recover` after building Electron main.
+It injects one decoder failure after committed output in each real MP4/GIF export, checks
+software decoding resumes without duplicate timestamps, and inspects the encoded ending
+picture/audio. It covers both ordered clips and the legacy source clock. Run the same tool
+with `--4k` for normal 4K WebGL/WebGPU/legacy MP4 and GIF regression checks.
+
 ## Preview source cleanup smoke
 
 After building the Electron main entry, run `node tools/playwright/smoke-preview-memory.cjs`.
