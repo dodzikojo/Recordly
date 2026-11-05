@@ -74,6 +74,9 @@ changing product code in response can hide an environmental failure.
 - Copy decoded export frames through `VideoFrameStager` before uploading them to Pixi.
   Borrowed decoder frames and GPU-backed bitmaps can produce missing picture after the
   decoder advances. Keep staging canvases reusable, separate by layer, and disposed.
+- Keep the editor's `PreviewVideoSource` owned by its HTML video element. Suspend/unload it
+  during texture cleanup and destroy it on element detachment; `VideoSource.destroy()` clears
+  the media URL, so destroying it on layout cleanup interrupts playback.
 - Confirm an audio stream exists before bulk audio decoding a screen recording. A silent
   video can be multi-GB; preserve browser fallback for actual or misidentified audio files.
 
